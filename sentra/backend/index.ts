@@ -1,23 +1,47 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Connection, PublicKey } from "@solana/web3.js";
 import fs from "fs";
+import axios from "axios";
+import dotenv from "dotenv";
 
-// ------------------------------
-// CONFIG
-// ------------------------------
+dotenv.config();
+
+/* ==========================
+   CONFIG
+========================== */
 
 const RPC_URL = "http://127.0.0.1:8899";
-const COINGECKO_API =
+
+const MONITOR_INTERVAL = 60 * 1000; // 1 min
+const HISTORY_REFRESH_INTERVAL = 60 * 60 * 1000; // 1 hour
+const SHOCK_THRESHOLD = 5; // %
+const RISK_ALERT_THRESHOLD = 25; // Risk %
+const ALERT_COOLDOWN = 5 * 60 * 1000; // 5 min
+
+const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN!;
+const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID!;
+
+const COINGECKO_SIMPLE =
   "https://api.coingecko.com/api/v3/simple/price";
 
-// Wrapped SOL mint
-const WSOL_MINT =
-  "So11111111111111111111111111111111111111112";
+const COINGECKO_HISTORY =
+  "https://api.coingecko.com/api/v3/coins";
 
-// Use native fetch (Node 18+)
-const fetch = globalThis.fetch;
+/* ==========================
+   TRACKED ASSETS
+========================== */
 
-// Load local keypair
+const TRACKED_ASSETS = {
+  SOL: "solana",
+  BONK: "bonk",
+  JUP: "jupiter-exchange-solana",
+  USDC: "usd-coin",
+};
+
+/* ==========================
+   WALLET
+========================== */
+
 const keypair = anchor.web3.Keypair.fromSecretKey(
   new Uint8Array(
     JSON.parse(
@@ -29,93 +53,125 @@ const keypair = anchor.web3.Keypair.fromSecretKey(
   )
 );
 
-// ------------------------------
-// Risk Logic
-// ------------------------------
+/* ==========================
+   TELEGRAM
+========================== */
 
-function computeHHI(weights: number[]): number {
-  return weights.reduce((sum, w) => sum + w * w, 0);
+async function sendTelegramAlert(message: string) {
+  try {
+    await axios.post(
+      `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`,
+      {
+        chat_id: TELEGRAM_CHAT_ID,
+        text: message,
+      }
+    );
+    console.log("📩 Alert sent");
+  } catch (err) {
+    console.log("Telegram error (ignored)");
+  }
 }
 
-// ------------------------------
-// Fetch SPL Tokens
-// ------------------------------
+/* ==========================
+   MATH
+========================== */
 
-async function fetchTokenPortfolio(
-  connection: Connection,
-  owner: PublicKey
+function mean(arr: number[]) {
+  return arr.reduce((a, b) => a + b, 0) / arr.length;
+}
+
+function computeReturns(prices: number[]) {
+  const returns: number[] = [];
+  for (let i = 1; i < prices.length; i++) {
+    returns.push(
+      (prices[i] - prices[i - 1]) / prices[i - 1]
+    );
+  }
+  return returns;
+}
+
+function covariance(a: number[], b: number[]) {
+  const meanA = mean(a);
+  const meanB = mean(b);
+  let sum = 0;
+
+  for (let i = 0; i < a.length; i++) {
+    sum += (a[i] - meanA) * (b[i] - meanB);
+  }
+
+  return sum / (a.length - 1);
+}
+
+function portfolioVariance(
+  weights: number[],
+  returnMatrix: number[][]
 ) {
-  const tokenAccounts =
-    await connection.getParsedTokenAccountsByOwner(owner, {
-      programId: anchor.utils.token.TOKEN_PROGRAM_ID,
-    });
+  let variance = 0;
 
-  const portfolio: {
-    mint: string;
-    balance: number;
-  }[] = [];
-
-  for (const account of tokenAccounts.value) {
-    const info = account.account.data.parsed.info;
-    const amount = info.tokenAmount.uiAmount;
-
-    if (amount && amount > 0) {
-      portfolio.push({
-        mint: info.mint,
-        balance: amount,
-      });
+  for (let i = 0; i < weights.length; i++) {
+    for (let j = 0; j < weights.length; j++) {
+      variance +=
+        weights[i] *
+        weights[j] *
+        covariance(returnMatrix[i], returnMatrix[j]);
     }
   }
 
-  return portfolio;
+  return variance;
 }
 
-// ------------------------------
-// Fetch Prices (CoinGecko)
-// ------------------------------
+/* ==========================
+   DATA FETCH
+========================== */
 
-async function fetchPrices(
-  mints: string[]
-) {
-  // Map Solana mint to CoinGecko ID
-  const idsMap: Record<string, string> = {
-    [WSOL_MINT]: "solana",
+async function fetchLivePrices() {
+  const ids = Object.values(TRACKED_ASSETS).join(",");
+
+  const res = await axios.get(COINGECKO_SIMPLE, {
+    params: {
+      ids,
+      vs_currencies: "usd",
+    },
+  });
+
+  const data = res.data;
+
+  return {
+    SOL: data["solana"]?.usd || 0,
+    BONK: data["bonk"]?.usd || 0,
+    JUP: data["jupiter-exchange-solana"]?.usd || 0,
+    USDC: data["usd-coin"]?.usd || 1,
   };
-
-  const ids = mints
-    .map((mint) => idsMap[mint])
-    .filter(Boolean)
-    .join(",");
-
-  if (!ids) return {};
-
-  const response = await fetch(
-    `${COINGECKO_API}?ids=${ids}&vs_currencies=usd`
-  );
-
-  const data = await response.json();
-  return data;
 }
 
-// ------------------------------
-// MAIN
-// ------------------------------
-
-async function main() {
-  console.log("Sentra Risk Engine Starting...\n");
-
-  const connection = new Connection(
-    RPC_URL,
-    "confirmed"
+async function fetchHistory(coinId: string) {
+  const res = await axios.get(
+    `${COINGECKO_HISTORY}/${coinId}/market_chart`,
+    {
+      params: {
+        vs_currency: "usd",
+        days: 30,
+      },
+    }
   );
+
+  if (!res.data?.prices) return [];
+
+  return res.data.prices.map((p: any) => p[1]);
+}
+
+/* ==========================
+   ENGINE
+========================== */
+
+async function startEngine() {
+  console.log("🚀 Sentra Quant Engine Running\n");
+
+  const connection = new Connection(RPC_URL, "confirmed");
 
   const wallet = new anchor.Wallet(keypair);
   const provider =
-    new anchor.AnchorProvider(
-      connection,
-      wallet,
-      {}
-    );
+    new anchor.AnchorProvider(connection, wallet, {});
 
   anchor.setProvider(provider);
 
@@ -131,165 +187,207 @@ async function main() {
     provider
   );
 
-  const programId = program.programId;
   const user = keypair.publicKey;
 
-  // ------------------------------
-  // Fetch SOL Balance
-  // ------------------------------
+  let cachedReturnMatrix: number[][] = [];
+  let lastHistoryFetch = 0;
 
-  const solLamports =
-    await connection.getBalance(user);
+  let lastPrice = 0;
+  let lastAlertTime = 0;
 
-  const solBalance = solLamports / 1e9;
+  setInterval(async () => {
+    try {
+      /* ===== Live Prices ===== */
 
-  console.log("SOL Balance:", solBalance);
+      const prices = await fetchLivePrices();
 
-  // ------------------------------
-  // Fetch SPL Tokens
-  // ------------------------------
+      const solBalance =
+        (await connection.getBalance(user)) /
+        1e9;
 
-  const splPortfolio =
-    await fetchTokenPortfolio(
-      connection,
-      user
-    );
+      const portfolio = [
+        { symbol: "SOL", amount: solBalance },
+        { symbol: "BONK", amount: 0 },
+        { symbol: "JUP", amount: 0 },
+        { symbol: "USDC", amount: 0 },
+      ];
 
-  // Combine SOL + SPL
-  const portfolio = [
-    { mint: WSOL_MINT, balance: solBalance },
-    ...splPortfolio,
-  ];
+      const portfolioValue = portfolio.reduce(
+        (sum, asset) =>
+          sum +
+          asset.amount *
+            prices[
+              asset.symbol as keyof typeof prices
+            ],
+        0
+      );
 
-  console.log("Detected Assets:", portfolio);
+      /* ===== Shock Detection ===== */
 
-  if (portfolio.length === 0) {
-    console.log("No assets detected.");
-    return;
-  }
+      const currentPrice = prices.SOL;
 
-  // ------------------------------
-  // Fetch Live Prices
-  // ------------------------------
+      if (lastPrice !== 0) {
+        const change =
+          ((currentPrice - lastPrice) /
+            lastPrice) *
+          100;
 
-  const uniqueMints = [
-    ...new Set(portfolio.map((a) => a.mint)),
-  ];
-
-  const prices = await fetchPrices(
-    uniqueMints
-  );
-
-  // ------------------------------
-  // Convert to USD
-  // ------------------------------
-
-  const portfolioWithUSD = portfolio.map(
-    (asset) => {
-      let price = 0;
-
-      if (asset.mint === WSOL_MINT) {
-        price =
-          prices["solana"]?.usd || 0;
+        if (
+          change <= -SHOCK_THRESHOLD &&
+          Date.now() - lastAlertTime >
+            ALERT_COOLDOWN
+        ) {
+          await sendTelegramAlert(
+            `⚠️ MARKET SHOCK\nSOL dropped ${change.toFixed(
+              2
+            )}%`
+          );
+          lastAlertTime = Date.now();
+        }
       }
 
-      return {
-        mint: asset.mint,
-        usdValue:
-          asset.balance * price,
-      };
+      lastPrice = currentPrice;
+
+      /* ===== Historical Cache ===== */
+
+      if (
+        cachedReturnMatrix.length === 0 ||
+        Date.now() - lastHistoryFetch >
+          HISTORY_REFRESH_INTERVAL
+      ) {
+        console.log("Refreshing historical data...");
+
+        const newMatrix: number[][] = [];
+
+        for (const coinId of Object.values(
+          TRACKED_ASSETS
+        )) {
+          try {
+            const history =
+              await fetchHistory(coinId);
+
+            if (history.length > 2) {
+              newMatrix.push(
+                computeReturns(history)
+              );
+            }
+          } catch {
+            console.log(
+              `History failed for ${coinId}`
+            );
+          }
+        }
+
+        cachedReturnMatrix = newMatrix;
+        lastHistoryFetch = Date.now();
+      }
+
+      if (cachedReturnMatrix.length === 0) {
+        console.log(
+          "Waiting for historical data..."
+        );
+        return;
+      }
+
+      /* ===== VaR Calculation ===== */
+
+      const weights = portfolio.map(
+        (asset) =>
+          (asset.amount *
+            prices[
+              asset.symbol as keyof typeof prices
+            ]) /
+          portfolioValue
+      );
+
+      const variance = portfolioVariance(
+        weights,
+        cachedReturnMatrix
+      );
+
+      const sigma = Math.sqrt(variance);
+
+      const VaR =
+        1.65 * sigma * portfolioValue;
+
+      const riskScore = Math.min(
+        100,
+        (VaR / portfolioValue) * 100
+      );
+
+      console.log(
+        `Portfolio: $${portfolioValue.toFixed(
+          2
+        )} | Risk: ${riskScore.toFixed(2)}`
+      );
+
+      /* ===== Risk Alert ===== */
+
+      if (
+        riskScore >= RISK_ALERT_THRESHOLD &&
+        Date.now() - lastAlertTime >
+          ALERT_COOLDOWN
+      ) {
+        await sendTelegramAlert(
+          `⚠️ HIGH RISK\nScore: ${riskScore.toFixed(
+            2
+          )}`
+        );
+        lastAlertTime = Date.now();
+      }
+
+      /* ===== On-Chain Record ===== */
+
+      const [preferencePda] =
+        PublicKey.findProgramAddressSync(
+          [
+            Buffer.from(
+              "risk_preference"
+            ),
+            user.toBuffer(),
+          ],
+          program.programId
+        );
+
+      const timestamp =
+        Math.floor(Date.now() / 1000);
+
+      const timestampBN =
+        new anchor.BN(timestamp);
+
+      const [snapshotPda] =
+        PublicKey.findProgramAddressSync(
+          [
+            Buffer.from(
+              "risk_snapshot"
+            ),
+            user.toBuffer(),
+            timestampBN.toArrayLike(
+              Buffer,
+              "le",
+              8
+            ),
+          ],
+          program.programId
+        );
+
+      await program.methods
+        .recordRiskScore(
+          Math.floor(riskScore),
+          timestampBN
+        )
+        .accounts({
+          preference: preferencePda,
+          snapshot: snapshotPda,
+          user: user,
+          systemProgram:
+            anchor.web3.SystemProgram.programId,
+        })
+        .rpc();
+    } catch (err) {
+      console.log("Engine error (ignored)");
     }
-  );
-
-  const totalUSD =
-    portfolioWithUSD.reduce(
-      (sum, a) => sum + a.usdValue,
-      0
-    );
-
-  const weights =
-    portfolioWithUSD.map(
-      (a) => a.usdValue / totalUSD
-    );
-
-  const hhi = computeHHI(weights);
-
-  const riskScore = Math.min(
-    100,
-    hhi * 100
-  );
-
-  console.log(
-    "Total USD Value:",
-    totalUSD.toFixed(2)
-  );
-  console.log(
-    "HHI:",
-    hhi.toFixed(4)
-  );
-  console.log(
-    "Risk Score:",
-    riskScore.toFixed(2)
-  );
-
-  // ------------------------------
-  // Derive PDAs
-  // ------------------------------
-
-  const [preferencePda] =
-    PublicKey.findProgramAddressSync(
-      [
-        Buffer.from("risk_preference"),
-        user.toBuffer(),
-      ],
-      programId
-    );
-
-  const timestamp =
-    Math.floor(Date.now() / 1000);
-
-  const timestampBN =
-    new anchor.BN(timestamp);
-
-  const [snapshotPda] =
-    PublicKey.findProgramAddressSync(
-      [
-        Buffer.from("risk_snapshot"),
-        user.toBuffer(),
-        timestampBN.toArrayLike(
-          Buffer,
-          "le",
-          8
-        ),
-      ],
-      programId
-    );
-
-  // ------------------------------
-  // Record On-Chain
-  // ------------------------------
-
-  console.log(
-    "\nRecording risk score on-chain..."
-  );
-
-  await program.methods
-    .recordRiskScore(
-      Math.floor(riskScore),
-      timestampBN
-    )
-    .accounts({
-      preference: preferencePda,
-      snapshot: snapshotPda,
-      user: user,
-      systemProgram:
-        anchor.web3.SystemProgram.programId,
-    })
-    .rpc();
-
-  console.log(
-    "Risk recorded successfully."
-  );
+  }, MONITOR_INTERVAL);
 }
 
-main().catch(console.error);
+startEngine();
