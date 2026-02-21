@@ -6,7 +6,7 @@ resolution = true
 skip-lint = false
 
 [programs.localnet]
-sentra = "3hvd91mHEs4ujsWkRAaGLzkvY7VTNwpaD79is2YFZrma"
+sentra = "73SS3HB4KTFDWkPkY68FHd3eSpEAqCLpej71ebGAUujA"
 
 [registry]
 url = "https://api.apr.dev"
