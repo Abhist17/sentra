@@ -1,3 +1,4 @@
+import { updateMetrics } from "../api/routes";
 export function mean(arr: number[]) {
   return arr.reduce((a, b) => a + b, 0) / arr.length;
 }

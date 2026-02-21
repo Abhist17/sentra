@@ -7,8 +7,8 @@ import {
   getProgram,
   recordRiskScoreOnChain,
 } from "../services/blockchain.service";
+import { updateMetrics } from "../api/routes";
 import { CONFIG } from "../config/env";
-
 export async function startRiskEngine() {
   console.log("🚀 Sentra Quant Engine Running\n");
 
@@ -129,11 +129,11 @@ export async function startRiskEngine() {
         cachedReturnMatrix
       );
 
-      console.log(
-        `Portfolio: $${portfolioValue.toFixed(
-          2
-        )} | Risk: ${riskScore.toFixed(2)}`
-      );
+      updateMetrics(riskScore, portfolioValue);
+
+console.log(
+  `Portfolio: $${portfolioValue.toFixed(2)} | Risk: ${riskScore.toFixed(2)}`
+);
 
       /* =============================
          5. HIGH RISK ALERT

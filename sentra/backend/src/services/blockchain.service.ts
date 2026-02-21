@@ -86,3 +86,24 @@ export async function recordRiskScoreOnChain(
     })
     .rpc();
 }
+export async function fetchUserSnapshots(
+  program: anchor.Program,
+  user: PublicKey
+) {
+  const snapshots = await (program as any).account.riskSnapshot.all([
+    {
+      memcmp: {
+        offset: 8, // Skip discriminator
+        bytes: user.toBase58(),
+      },
+    },
+  ]);
+
+  return snapshots
+  .map((s: any) => ({
+    publicKey: s.publicKey.toBase58(),
+    riskScore: s.account.riskScore,
+    timestamp: s.account.timestamp.toNumber(),
+  }))
+  .sort((a: any, b: any) => a.timestamp - b.timestamp);
+}
