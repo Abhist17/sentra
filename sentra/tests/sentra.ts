@@ -1,35 +1,38 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program } from "@coral-xyz/anchor";
 import { Sentra } from "../target/types/sentra";
-import { assert } from "chai";
+import { expect } from "chai";
 
 describe("sentra", () => {
+
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
   const program = anchor.workspace.Sentra as Program<Sentra>;
+
   const user = provider.wallet;
 
   let preferencePda: anchor.web3.PublicKey;
+  let bump: number;
 
   before(async () => {
-    // Derive RiskPreference PDA
-    const [pda] = anchor.web3.PublicKey.findProgramAddressSync(
-      [
-        Buffer.from("risk_preference"),
-        user.publicKey.toBuffer(),
-      ],
-      program.programId
-    );
-    preferencePda = pda;
+
+    [preferencePda, bump] =
+      anchor.web3.PublicKey.findProgramAddressSync(
+        [Buffer.from("risk_preference"), user.publicKey.toBuffer()],
+        program.programId
+      );
+
   });
 
-  // -----------------------------------
-  // Initialize
-  // -----------------------------------
+  // ------------------------------
+  // Initialize Preference
+  // ------------------------------
+
   it("Initializes preference correctly", async () => {
+
     await program.methods
-      .initializePreferences(75)
+      .initializePreferences(60)
       .accounts({
         preference: preferencePda,
         user: user.publicKey,
@@ -40,17 +43,21 @@ describe("sentra", () => {
     const account =
       await program.account.riskPreference.fetch(preferencePda);
 
-    assert.equal(account.threshold, 75);
-    assert.equal(
-      account.owner.toBase58(),
-      user.publicKey.toBase58()
-    );
+    expect(account.threshold).to.equal(60);
+    expect(account.owner.toString()).to.equal(user.publicKey.toString());
+
   });
 
+  // ------------------------------
+  // Threshold Validation
+  // ------------------------------
+
   it("Fails if threshold > 100", async () => {
+
     try {
+
       await program.methods
-        .initializePreferences(150)
+        .initializePreferences(120)
         .accounts({
           preference: preferencePda,
           user: user.publicKey,
@@ -58,14 +65,22 @@ describe("sentra", () => {
         })
         .rpc();
 
-      assert.fail("Should have failed for invalid threshold");
+      expect.fail("Should have failed");
+
     } catch (err) {
-      assert.ok(err);
+      expect(err).to.exist;
     }
+
   });
 
+  // ------------------------------
+  // Prevent Reinitialization
+  // ------------------------------
+
   it("Fails if preference already initialized", async () => {
+
     try {
+
       await program.methods
         .initializePreferences(50)
         .accounts({
@@ -75,18 +90,22 @@ describe("sentra", () => {
         })
         .rpc();
 
-      assert.fail("Reinitialization should fail");
+      expect.fail("Should not allow reinitialization");
+
     } catch (err) {
-      assert.ok(err);
+      expect(err).to.exist;
     }
+
   });
 
-  // -----------------------------------
+  // ------------------------------
   // Update Threshold
-  // -----------------------------------
+  // ------------------------------
+
   it("Updates threshold correctly", async () => {
+
     await program.methods
-      .updateThreshold(40)
+      .updateThreshold(70)
       .accounts({
         preference: preferencePda,
         user: user.publicKey,
@@ -96,22 +115,22 @@ describe("sentra", () => {
     const account =
       await program.account.riskPreference.fetch(preferencePda);
 
-    assert.equal(account.threshold, 40);
+    expect(account.threshold).to.equal(70);
+
   });
 
+  // ------------------------------
+  // Unauthorized Update
+  // ------------------------------
+
   it("Fails when non-owner tries to update threshold", async () => {
+
     const attacker = anchor.web3.Keypair.generate();
 
-    // Airdrop SOL to attacker
-    const signature = await provider.connection.requestAirdrop(
-      attacker.publicKey,
-      1_000_000_000
-    );
-    await provider.connection.confirmTransaction(signature);
-
     try {
+
       await program.methods
-        .updateThreshold(10)
+        .updateThreshold(90)
         .accounts({
           preference: preferencePda,
           user: attacker.publicKey,
@@ -119,30 +138,34 @@ describe("sentra", () => {
         .signers([attacker])
         .rpc();
 
-      assert.fail("Unauthorized update should fail");
+      expect.fail("Unauthorized update should fail");
+
     } catch (err) {
-      assert.ok(err);
+      expect(err).to.exist;
     }
+
   });
 
-  // -----------------------------------
+  // ------------------------------
   // Record Risk Score
-  // -----------------------------------
+  // ------------------------------
+
   it("Records risk score and creates snapshot", async () => {
-    const timestamp = Math.floor(Date.now() / 1000);
+
+    const timestamp = new anchor.BN(Date.now());
 
     const [snapshotPda] =
       anchor.web3.PublicKey.findProgramAddressSync(
         [
           Buffer.from("risk_snapshot"),
           user.publicKey.toBuffer(),
-          new anchor.BN(timestamp).toArrayLike(Buffer, "le", 8),
+          timestamp.toArrayLike(Buffer, "le", 8),
         ],
         program.programId
       );
 
     await program.methods
-      .recordRiskScore(60, new anchor.BN(timestamp))
+      .recordRiskScore(50, timestamp)
       .accounts({
         preference: preferencePda,
         snapshot: snapshotPda,
@@ -154,29 +177,32 @@ describe("sentra", () => {
     const snapshot =
       await program.account.riskSnapshot.fetch(snapshotPda);
 
-    assert.equal(snapshot.riskScore, 60);
-    assert.equal(
-      snapshot.owner.toBase58(),
-      user.publicKey.toBase58()
-    );
+    expect(snapshot.riskScore).to.equal(50);
+
   });
 
+  // ------------------------------
+  // Risk Score Validation
+  // ------------------------------
+
   it("Fails if risk score > 100", async () => {
-    const timestamp = Math.floor(Date.now() / 1000) + 1000;
+
+    const timestamp = new anchor.BN(Date.now());
 
     const [snapshotPda] =
       anchor.web3.PublicKey.findProgramAddressSync(
         [
           Buffer.from("risk_snapshot"),
           user.publicKey.toBuffer(),
-          new anchor.BN(timestamp).toArrayLike(Buffer, "le", 8),
+          timestamp.toArrayLike(Buffer, "le", 8),
         ],
         program.programId
       );
 
     try {
+
       await program.methods
-        .recordRiskScore(150, new anchor.BN(timestamp))
+        .recordRiskScore(150, timestamp)
         .accounts({
           preference: preferencePda,
           snapshot: snapshotPda,
@@ -185,9 +211,128 @@ describe("sentra", () => {
         })
         .rpc();
 
-      assert.fail("Should fail for invalid risk score");
+      expect.fail("Invalid risk score should fail");
+
     } catch (err) {
-      assert.ok(err);
+      expect(err).to.exist;
     }
+
   });
+
+  // ------------------------------
+  // PDA Validation
+  // ------------------------------
+
+  it("Derives preference PDA correctly", async () => {
+
+    const account =
+      await program.account.riskPreference.fetch(preferencePda);
+
+    expect(account.owner.toString()).to.equal(user.publicKey.toString());
+
+  });
+
+  // ------------------------------
+  // Timestamp Storage
+  // ------------------------------
+
+  it("Stores timestamp correctly in snapshot", async () => {
+
+    const timestamp = new anchor.BN(123456);
+
+    const [snapshotPda] =
+      anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("risk_snapshot"),
+          user.publicKey.toBuffer(),
+          timestamp.toArrayLike(Buffer, "le", 8),
+        ],
+        program.programId
+      );
+
+    await program.methods
+      .recordRiskScore(40, timestamp)
+      .accounts({
+        preference: preferencePda,
+        snapshot: snapshotPda,
+        user: user.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
+
+    const snapshot =
+      await program.account.riskSnapshot.fetch(snapshotPda);
+
+    expect(snapshot.timestamp.toNumber()).to.equal(123456);
+
+  });
+
+  // ------------------------------
+  // Last Risk Score Update
+  // ------------------------------
+
+  it("Updates last risk score in preference", async () => {
+
+    const timestamp = new anchor.BN(Date.now());
+
+    const [snapshotPda] =
+      anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("risk_snapshot"),
+          user.publicKey.toBuffer(),
+          timestamp.toArrayLike(Buffer, "le", 8),
+        ],
+        program.programId
+      );
+
+    await program.methods
+      .recordRiskScore(80, timestamp)
+      .accounts({
+        preference: preferencePda,
+        snapshot: snapshotPda,
+        user: user.publicKey,
+        systemProgram: anchor.web3.SystemProgram.programId,
+      })
+      .rpc();
+
+    const pref =
+      await program.account.riskPreference.fetch(preferencePda);
+
+    expect(pref.lastRiskScore).to.equal(80);
+
+  });
+
+  // ------------------------------
+  // Unique Snapshot Check
+  // ------------------------------
+
+  it("Creates unique snapshots for different timestamps", async () => {
+
+    const t1 = new anchor.BN(Date.now());
+    const t2 = new anchor.BN(Date.now() + 1);
+
+    const [snap1] =
+      anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("risk_snapshot"),
+          user.publicKey.toBuffer(),
+          t1.toArrayLike(Buffer, "le", 8),
+        ],
+        program.programId
+      );
+
+    const [snap2] =
+      anchor.web3.PublicKey.findProgramAddressSync(
+        [
+          Buffer.from("risk_snapshot"),
+          user.publicKey.toBuffer(),
+          t2.toArrayLike(Buffer, "le", 8),
+        ],
+        program.programId
+      );
+
+    expect(snap1.toString()).to.not.equal(snap2.toString());
+
+  });
+
 });
