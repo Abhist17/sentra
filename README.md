@@ -107,10 +107,4 @@ anchor deploy --provider.cluster devnet
 
 ---
 
-## License
 
-MIT
-
----
-
-*Built in ~2 weeks. Shipped with 0 regrets and a lot of caffeine.*
