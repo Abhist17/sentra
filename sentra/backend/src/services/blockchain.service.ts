@@ -4,6 +4,9 @@ import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import fs from "fs";
 import { CONFIG } from "../config/env";
 
+// 🔥 Toggle simulation mode
+const SIMULATION_MODE = true;
+
 // Known SPL token mint addresses (mainnet)
 export const TOKEN_MINTS: Record<string, string> = {
   BONK: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
@@ -12,8 +15,6 @@ export const TOKEN_MINTS: Record<string, string> = {
 };
 
 // ── Dual RPC setup ───────────────────────────────────────────────
-// Localnet  → Anchor program (write risk scores on-chain)
-// Mainnet   → Read real wallet balances (toly.sol, user wallets)
 const mainnetConnection = new Connection(
   process.env.MAINNET_RPC_URL || "https://api.mainnet-beta.solana.com",
   "confirmed"
@@ -54,14 +55,13 @@ export function getProgram(provider: anchor.AnchorProvider) {
 }
 
 /**
- * Fetches real SOL + SPL token balances for any wallet.
- * Always reads from MAINNET so real wallet data is fetched
- * regardless of what RPC the Anchor program is on.
+ * Fetches wallet portfolio (REAL + SIMULATION fallback)
  */
 export async function fetchWalletPortfolio(
   _connection: Connection,
   walletAddress: PublicKey
 ): Promise<{ symbol: string; amount: number }[]> {
+
   const solRaw = await mainnetConnection.getBalance(walletAddress);
   const solBalance = solRaw / 1e9;
 
@@ -87,15 +87,35 @@ export async function fetchWalletPortfolio(
       }
     }
   } catch {
-    console.warn("⚠️  Could not fetch SPL token accounts, using SOL only");
+    console.warn("⚠️ Could not fetch SPL tokens");
   }
 
-  return [
+  // 🔥 REAL PORTFOLIO
+  let portfolio = [
     { symbol: "SOL",  amount: solBalance },
     { symbol: "BONK", amount: tokenBalances.BONK },
     { symbol: "JUP",  amount: tokenBalances.JUP },
     { symbol: "USDC", amount: tokenBalances.USDC },
   ];
+
+  const totalBalance =
+    solBalance +
+    tokenBalances.BONK +
+    tokenBalances.JUP +
+    tokenBalances.USDC;
+
+  // 🔥 SIMULATION FALLBACK
+  if (SIMULATION_MODE && totalBalance === 0) {
+    console.log("⚠️ Using simulated portfolio for empty wallet");
+
+    portfolio = [
+      { symbol: "SOL", amount: 5 },
+      { symbol: "JUP", amount: 200 },
+      { symbol: "USDC", amount: 1000 },
+    ];
+  }
+
+  return portfolio;
 }
 
 export function derivePreferencePda(user: PublicKey, programId: PublicKey) {
@@ -120,10 +140,6 @@ export function deriveSnapshotPda(
   );
 }
 
-/**
- * Ensures the preference PDA exists on localnet.
- * Auto-initializes with default threshold of 50 if missing.
- */
 export async function ensurePreferenceInitialized(
   program: anchor.Program,
   user: PublicKey,
@@ -147,11 +163,6 @@ export async function ensurePreferenceInitialized(
   }
 }
 
-/**
- * Records a risk score on-chain for a given wallet.
- * Writes to localnet Anchor program.
- * Auto-initializes the preference account if missing.
- */
 export async function recordRiskScoreOnChain(
   program: anchor.Program,
   user: PublicKey,
@@ -175,7 +186,11 @@ export async function recordRiskScoreOnChain(
     })
     .rpc();
 
-  console.log(`✅ Risk score ${riskScore} recorded on-chain for ${user.toBase58().slice(0, 8)}...`);
+  console.log(
+    `✅ Risk score ${riskScore} recorded on-chain for ${user
+      .toBase58()
+      .slice(0, 8)}...`
+  );
 }
 
 export async function fetchUserSnapshots(

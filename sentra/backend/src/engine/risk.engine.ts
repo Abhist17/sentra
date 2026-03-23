@@ -17,7 +17,7 @@ import {
   getWalletLabel,
   isWalletOwned,
 } from "../services/wallet.registry";
-import { updateMetrics } from "../api/routes";
+import { updateMetrics } from "../store/metrics.store";
 import { CONFIG } from "../config/env";
 
 export async function startRiskEngine() {
