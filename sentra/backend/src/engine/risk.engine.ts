@@ -30,6 +30,7 @@ export async function startRiskEngine() {
   let cachedReturnMatrix: number[][] = [];
   let lastHistoryFetch = 0;
   let lastSolPrice     = 0;
+  const prevPrices: Record<string, number> = {};
 
   const lastAlertTime: Map<string, number> = new Map();
 
@@ -50,19 +51,27 @@ export async function startRiskEngine() {
       /* =============================
          2. MARKET SHOCK DETECTION
       ============================= */
-      if (lastSolPrice !== 0) {
-        const change = ((prices.SOL - lastSolPrice) / lastSolPrice) * 100;
-        if (change <= -CONFIG.SHOCK_THRESHOLD) {
-          console.log(`🚨 Market shock! SOL changed ${change.toFixed(2)}%`);
-          await sendTelegramAlert(
-            `🚨 MARKET SHOCK DETECTED\n\n` +
-            `SOL dropped ${Math.abs(change).toFixed(2)}% in one interval\n` +
-            `Current price: $${prices.SOL.toFixed(2)}\n\n` +
-            `⚡ Sentra is monitoring all wallets for impact.`
-          );
-        }
-      }
-      lastSolPrice = prices.SOL;
+      let marketShock = false;
+
+for (const symbol in prices) {
+  if (prevPrices[symbol]) {
+    const change =
+      ((prices[symbol] - prevPrices[symbol]) / prevPrices[symbol]) * 100;
+
+    if (change <= -CONFIG.SHOCK_THRESHOLD) {
+      marketShock = true;
+
+      console.log(`🚨 ${symbol} shock: ${change.toFixed(2)}%`);
+
+      await sendTelegramAlert(
+        `🚨 MARKET SHOCK DETECTED\n\n` +
+        `${symbol} dropped ${Math.abs(change).toFixed(2)}%\n` +
+        `Price: $${prices[symbol].toFixed(4)}`
+      );
+    }
+  }
+  prevPrices[symbol] = prices[symbol];
+}
 
       /* =============================
          3. HISTORY REFRESH
@@ -136,15 +145,41 @@ export async function startRiskEngine() {
           const weights = portfolio.map(
             (asset) => (asset.amount * (prices[asset.symbol] ?? 0)) / portfolioValue
           );
+          const maxWeight = Math.max(...weights);
 
-          const { riskScore } = calculateVaR(portfolioValue, weights, cachedReturnMatrix);
+let concentrationRisk = 0;
+if (maxWeight > 0.5) concentrationRisk = 20;
+else if (maxWeight > 0.3) concentrationRisk = 10;
 
-          updateMetrics(riskScore, portfolioValue, address);
+          const { riskScore: varRisk } = calculateVaR(
+  portfolioValue,
+  weights,
+  cachedReturnMatrix
+);
+
+let hybridRisk = varRisk;
+
+// concentration penalty
+hybridRisk += concentrationRisk;
+
+// market shock penalty
+if (marketShock) hybridRisk += 15;
+
+// short-term trend
+const recentReturns = cachedReturnMatrix[0]?.slice(-5) || [];
+const trend = recentReturns.reduce((a, b) => a + b, 0);
+
+if (trend < 0) hybridRisk += 5;
+
+// cap
+hybridRisk = Math.min(100, hybridRisk);
+
+          updateMetrics(hybridRisk, portfolioValue, address);
 
           console.log(
             `[${label}] ` +
             `Portfolio: $${portfolioValue.toFixed(2)} | ` +
-            `Risk: ${riskScore.toFixed(2)}% | ` +
+            `Risk: ${hybridRisk.toFixed(2)}% | ` +
             `SOL: ${portfolio[0].amount.toFixed(4)}`
           );
 
@@ -153,15 +188,15 @@ export async function startRiskEngine() {
              Fires every cycle when
              risk >= threshold
           =========================== */
-          if (riskScore >= CONFIG.RISK_ALERT_THRESHOLD) {
+          if (hybridRisk >= CONFIG.RISK_ALERT_THRESHOLD) {
             const last = lastAlertTime.get(address) ?? 0;
             const now  = Date.now();
 
-            if (now - last >= CONFIG.MONITOR_INTERVAL) {
+            if (now - last >= CONFIG.ALERT_COOLDOWN) {
               await sendTelegramAlert(
                 `⚠️ HIGH RISK ALERT\n\n` +
                 `👛 Wallet: ${label}\n` +
-                `📊 Risk Score: ${riskScore.toFixed(2)}%\n` +
+                `📊 Risk Score: ${hybridRisk.toFixed(2)}%\n` +
                 `💰 Portfolio: $${portfolioValue.toFixed(2)}\n` +
                 `📉 SOL: $${prices.SOL.toFixed(2)}\n` +
                 `🪙 SOL Balance: ${portfolio[0].amount.toFixed(4)}\n\n` +
@@ -181,7 +216,7 @@ export async function startRiskEngine() {
              external wallets
           =========================== */
           if (owned) {
-            await recordRiskScoreOnChain(program, walletPubkey, Math.floor(riskScore));
+            await recordRiskScoreOnChain(program, walletPubkey, Math.floor(hybridRisk));
           } else {
             console.log(`📊 [${label}] Risk monitored (read-only wallet, skipping on-chain write)`);
           }

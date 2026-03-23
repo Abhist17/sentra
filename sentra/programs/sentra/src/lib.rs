@@ -1,6 +1,9 @@
 use anchor_lang::prelude::*;
 
-declare_id!("35PirCKfyFFPYR3nLUGmpTs8YRyhfz9CAUpHVwVhiLi4");
+ declare_id!("35PirCKfyFFPYR3nLUGmpTs8YRyhfz9CAUpHVwVhiLi4");
+
+//declare_id!("73SS3HB4KTFDWkPkY68FHd3eSpEAqCLpej71ebGAUujA");
+
 
 #[program]
 pub mod sentra {
