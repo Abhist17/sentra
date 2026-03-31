@@ -7,7 +7,7 @@
 
 ## What is Sentra?
 
-**Sentra** (from *Sentinel*) is a 24/7 on-chain portfolio risk monitoring system built on Solana. Instead of just showing your portfolio value, Sentra quantifies your actual risk exposure using **Value at Risk (VaR)** — a quant finance model used by institutional investors — and converts it into a real-time risk score stored immutably on-chain.
+**Sentra** (from *Sentinel*) is a 24/7 on-chain portfolio risk monitoring system built on Solana. Instead of just showing your portfolio value, Sentra quantifies your actual risk exposure using **Value at Risk (VaR)** - a quant finance model used by institutional investors — and converts it into a real-time risk score stored immutably on-chain.
 
 No more finding out what went wrong after the dump.
 
@@ -15,7 +15,7 @@ No more finding out what went wrong after the dump.
 
 ## The Problem
 
-Crypto moves fast. Most users just refresh their wallet balance — but that tells you nothing about *how risky* your current exposure is. There's no automated on-chain system that continuously calculates portfolio risk and warns you before things go sideways.
+Crypto moves fast. Most users just refresh their wallet balance - but that tells you nothing about *how risky* your current exposure is. There's no automated on-chain system that continuously calculates portfolio risk and warns you before things go sideways.
 
 Until now.
 
