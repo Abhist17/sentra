@@ -1,0 +1,360 @@
+{
+  "address": "35PirCKfyFFPYR3nLUGmpTs8YRyhfz9CAUpHVwVhiLi4",
+  "metadata": {
+    "name": "sentra",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Created with Anchor"
+  },
+  "instructions": [
+    {
+      "name": "initialize_preferences",
+      "discriminator": [
+        74,
+        30,
+        150,
+        71,
+        223,
+        65,
+        209,
+        177
+      ],
+      "accounts": [
+        {
+          "name": "preference",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  105,
+                  115,
+                  107,
+                  95,
+                  112,
+                  114,
+                  101,
+                  102,
+                  101,
+                  114,
+                  101,
+                  110,
+                  99,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "threshold",
+          "type": "u8"
+        }
+      ]
+    },
+    {
+      "name": "record_risk_score",
+      "discriminator": [
+        168,
+        80,
+        35,
+        212,
+        190,
+        74,
+        95,
+        98
+      ],
+      "accounts": [
+        {
+          "name": "preference",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  105,
+                  115,
+                  107,
+                  95,
+                  112,
+                  114,
+                  101,
+                  102,
+                  101,
+                  114,
+                  101,
+                  110,
+                  99,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "snapshot",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  105,
+                  115,
+                  107,
+                  95,
+                  115,
+                  110,
+                  97,
+                  112,
+                  115,
+                  104,
+                  111,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "arg",
+                "path": "timestamp"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "risk_score",
+          "type": "u8"
+        },
+        {
+          "name": "timestamp",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "update_threshold",
+      "discriminator": [
+        251,
+        36,
+        24,
+        179,
+        157,
+        31,
+        239,
+        234
+      ],
+      "accounts": [
+        {
+          "name": "preference",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  105,
+                  115,
+                  107,
+                  95,
+                  112,
+                  114,
+                  101,
+                  102,
+                  101,
+                  114,
+                  101,
+                  110,
+                  99,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user",
+          "signer": true
+        }
+      ],
+      "args": [
+        {
+          "name": "new_threshold",
+          "type": "u8"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "RiskPreference",
+      "discriminator": [
+        111,
+        220,
+        82,
+        122,
+        245,
+        168,
+        47,
+        101
+      ]
+    },
+    {
+      "name": "RiskSnapshot",
+      "discriminator": [
+        83,
+        86,
+        236,
+        250,
+        125,
+        59,
+        4,
+        209
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "RiskAlertEvent",
+      "discriminator": [
+        234,
+        17,
+        158,
+        193,
+        167,
+        48,
+        184,
+        9
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidThreshold",
+      "msg": "Threshold must be between 0 and 100"
+    },
+    {
+      "code": 6001,
+      "name": "Unauthorized",
+      "msg": "Unauthorized access"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidRiskScore",
+      "msg": "Risk score must be between 0 and 100"
+    }
+  ],
+  "types": [
+    {
+      "name": "RiskAlertEvent",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "risk_score",
+            "type": "u8"
+          },
+          {
+            "name": "threshold",
+            "type": "u8"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RiskPreference",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "threshold",
+            "type": "u8"
+          },
+          {
+            "name": "last_risk_score",
+            "type": "u8"
+          },
+          {
+            "name": "last_updated",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RiskSnapshot",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "owner",
+            "type": "pubkey"
+          },
+          {
+            "name": "risk_score",
+            "type": "u8"
+          },
+          {
+            "name": "timestamp",
+            "type": "i64"
+          }
+        ]
+      }
+    }
+  ]
+}

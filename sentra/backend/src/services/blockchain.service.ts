@@ -2,10 +2,13 @@ import * as anchor from "@coral-xyz/anchor";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import fs from "fs";
+import os from "os";
+import path from "path";
 import { CONFIG } from "../config/env";
 
-// 🔥 Toggle simulation mode
-const SIMULATION_MODE = true;
+// Bundled at build time so the service works from `dist/` and from any CWD.
+// Regenerate with `anchor build && cp target/idl/sentra.json backend/src/idl/`.
+import IDL from "../idl/sentra.json";
 
 // Known SPL token mint addresses (mainnet)
 export const TOKEN_MINTS: Record<string, string> = {
@@ -15,43 +18,88 @@ export const TOKEN_MINTS: Record<string, string> = {
 };
 
 // ── Dual RPC setup ───────────────────────────────────────────────
-const mainnetConnection = new Connection(
-  process.env.MAINNET_RPC_URL || "https://api.mainnet-beta.solana.com",
-  "confirmed"
-);
+const mainnetConnection = new Connection(CONFIG.MAINNET_RPC_URL, "confirmed");
 
-const keypair = anchor.web3.Keypair.fromSecretKey(
-  new Uint8Array(
-    JSON.parse(
-      fs.readFileSync("/home/abhi/.config/solana/id.json", "utf-8")
-    )
-  )
-);
+/**
+ * Loads the server signing keypair, in priority order:
+ *   1. SOLANA_SECRET_KEY   — base58 string or JSON byte array (use this in prod)
+ *   2. SOLANA_KEYPAIR_PATH — path to a Solana CLI keypair file
+ *   3. ~/.config/solana/id.json — local dev default
+ *
+ * Lazy + cached: nothing touches the filesystem until a signer is actually
+ * needed, so read-only routes still work on a host with no keypair configured.
+ */
+let cachedKeypair: anchor.web3.Keypair | null = null;
+
+export function loadKeypair(): anchor.web3.Keypair {
+  if (cachedKeypair) return cachedKeypair;
+
+  const inline = CONFIG.SOLANA_SECRET_KEY.trim();
+
+  if (inline) {
+    try {
+      const bytes = inline.startsWith("[")
+        ? Uint8Array.from(JSON.parse(inline))
+        : anchor.utils.bytes.bs58.decode(inline);
+
+      cachedKeypair = anchor.web3.Keypair.fromSecretKey(bytes);
+      return cachedKeypair;
+    } catch (err) {
+      throw new Error(
+        "SOLANA_SECRET_KEY is set but could not be parsed. " +
+          "Expected a base58 secret key or a JSON byte array. " +
+          (err instanceof Error ? err.message : String(err))
+      );
+    }
+  }
+
+  const keypairPath =
+    CONFIG.SOLANA_KEYPAIR_PATH ||
+    path.join(os.homedir(), ".config", "solana", "id.json");
+
+  if (!fs.existsSync(keypairPath)) {
+    throw new Error(
+      `No signing keypair found. Set SOLANA_SECRET_KEY (recommended for ` +
+        `deployment) or SOLANA_KEYPAIR_PATH. Looked at: ${keypairPath}`
+    );
+  }
+
+  cachedKeypair = anchor.web3.Keypair.fromSecretKey(
+    new Uint8Array(JSON.parse(fs.readFileSync(keypairPath, "utf-8")))
+  );
+
+  return cachedKeypair;
+}
+
+/**
+ * Reading snapshots and deriving PDAs needs a provider but no real signer.
+ * When no keypair is configured we fall back to an ephemeral one so read-only
+ * deployments boot cleanly — any write attempt then fails at the RPC, loudly.
+ */
+function resolveSigner(): anchor.web3.Keypair {
+  try {
+    return loadKeypair();
+  } catch (err) {
+    if (CONFIG.ENABLE_ONCHAIN_WRITES) throw err;
+
+    console.warn(
+      "⚠️  No signing keypair configured — running read-only. " +
+        (err instanceof Error ? err.message : String(err))
+    );
+    return anchor.web3.Keypair.generate();
+  }
+}
 
 export function createProvider() {
   const connection = new Connection(CONFIG.RPC_URL, "confirmed");
-  const wallet     = new anchor.Wallet(keypair);
+  const wallet     = new anchor.Wallet(resolveSigner());
   const provider   = new anchor.AnchorProvider(connection, wallet, {});
   anchor.setProvider(provider);
   return provider;
 }
 
 export function getProgram(provider: anchor.AnchorProvider) {
-  const idlPaths = [
-    "../target/idl/sentra.json",
-    "../../target/idl/sentra.json",
-  ];
-
-  for (const p of idlPaths) {
-    try {
-      const idl = JSON.parse(fs.readFileSync(p, "utf-8"));
-      return new anchor.Program(idl as anchor.Idl, provider);
-    } catch {
-      continue;
-    }
-  }
-
-  throw new Error("Could not find sentra.json IDL. Run `anchor build` first.");
+  return new anchor.Program(IDL as anchor.Idl, provider);
 }
 
 /**
@@ -105,7 +153,7 @@ export async function fetchWalletPortfolio(
     tokenBalances.USDC;
 
   // 🔥 SIMULATION FALLBACK
-  if (SIMULATION_MODE && totalBalance === 0) {
+  if (CONFIG.SIMULATION_MODE && totalBalance === 0) {
     console.log("⚠️ Using simulated portfolio for empty wallet");
 
     portfolio = [

@@ -5,3 +5,5 @@ target
 node_modules
 test-ledger
 .yarn
+test-keypair.json
+dist

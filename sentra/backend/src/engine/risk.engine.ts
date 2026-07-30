@@ -561,7 +561,12 @@ export async function startRiskEngine() {
           /* ===========================
              8. RECORD ON-CHAIN
           =========================== */
-          if (owned) {
+          if (!CONFIG.ENABLE_ONCHAIN_WRITES) {
+            // Each snapshot rents a fresh account, so writes stay opt-in.
+            console.log(
+              `📊 [${label}] Risk monitored (on-chain writes disabled)`
+            );
+          } else if (owned) {
             await recordRiskScoreOnChain(
               program,
               walletPubkey,

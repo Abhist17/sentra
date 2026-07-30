@@ -18,12 +18,14 @@
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
     "axios": "^1.13.6",
+    "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "express": "^5.2.1",
     "node-fetch": "^3.3.2"
   },
   "devDependencies": {
     "@types/axios": "^0.9.36",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^25.3.0",
     "ts-node": "^10.9.2",

@@ -1,3 +1,5 @@
 test-ledger/
+node_modules/
 
 sentra/backend/.env
+.claude/

@@ -1,5 +1,6 @@
-import { Express } from "express";
+import { Express, RequestHandler } from "express";
 import { PublicKey } from "@solana/web3.js";
+import { CONFIG } from "../config/env";
 import {
   createProvider,
   getProgram,
@@ -19,6 +20,22 @@ import {
   walletMetrics,
   getLatestMetrics,
 } from "../store/metrics.store";
+
+/**
+ * Guards routes that mutate state or spend resources (wallet registry writes,
+ * Telegram sends). Open by default for local dev; set API_KEY in the deployed
+ * environment and the routes start requiring `x-api-key`.
+ */
+const requireApiKey: RequestHandler = (req, res, next) => {
+  if (!CONFIG.API_KEY) return next();
+
+  const provided = req.header("x-api-key");
+  if (provided !== CONFIG.API_KEY) {
+    return res.status(401).json({ error: "Invalid or missing x-api-key" });
+  }
+
+  next();
+};
 
 export function registerRoutes(app: Express) {
 
@@ -58,7 +75,7 @@ export function registerRoutes(app: Express) {
   /* =============================
      POST /wallet/add
   ============================= */
-  app.post("/wallet/add", (req, res) => {
+  app.post("/wallet/add", requireApiKey, (req, res) => {
     try {
       const { address, label } = req.body;
       if (!address) return res.status(400).json({ error: "address is required" });
@@ -80,7 +97,7 @@ export function registerRoutes(app: Express) {
   /* =============================
      DELETE /wallet/remove
   ============================= */
-  app.delete("/wallet/remove", (req, res) => {
+  app.delete("/wallet/remove", requireApiKey, (req, res) => {
     try {
       const { address } = req.body;
       if (!address) return res.status(400).json({ error: "address is required" });
@@ -169,7 +186,7 @@ export function registerRoutes(app: Express) {
   /* =============================
      POST /test/alert
   ============================= */
-  app.post("/test/alert", async (req, res) => {
+  app.post("/test/alert", requireApiKey, async (req, res) => {
     try {
       const wallets = getWallets();
       const firstWallet = wallets[0];
@@ -206,7 +223,7 @@ export function registerRoutes(app: Express) {
   /* =============================
      POST /test/shock
   ============================= */
-  app.post("/test/shock", async (_, res) => {
+  app.post("/test/shock", requireApiKey, async (_, res) => {
     try {
       await sendTelegramAlert(
         `🚨 MARKET SHOCK DETECTED\n\n` +
