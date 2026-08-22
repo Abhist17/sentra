@@ -1,0 +1,38 @@
+# Runs the whole stack locally:  docker compose up
+#
+#   engine     http://localhost:4000
+#   dashboard  http://localhost:3000
+
+services:
+  engine:
+    build: ./sentra/backend
+    ports:
+      - "4000:4000"
+    volumes:
+      - sentra-data:/data
+    environment:
+      PORT: 4000
+      CORS_ORIGIN: "*"
+      MONITOR_INTERVAL: "60000"
+      MAINNET_RPC_URL: ${MAINNET_RPC_URL:-https://api.mainnet-beta.solana.com}
+      # Optional — alerts are skipped when these are unset.
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      COINGECKO_API_KEY: ${COINGECKO_API_KEY:-}
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./sentra/frontend
+      args:
+        # Baked into the static bundle at build time; the in-app dialog can
+        # still point a browser somewhere else.
+        NEXT_PUBLIC_API_URL: http://localhost:4000
+    ports:
+      - "3000:80"
+    depends_on:
+      - engine
+    restart: unless-stopped
+
+volumes:
+  sentra-data:

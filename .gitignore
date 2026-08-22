@@ -1,5 +1,16 @@
-test-ledger/
 node_modules/
-
-sentra/backend/.env
+test-ledger/
 .claude/
+
+# Secrets
+sentra/backend/.env
+sentra/frontend/.env
+sentra/frontend/.env.local
+
+# Build output
+dist/
+.next/
+target/
+
+# Runtime state (wallet registry, price-history cache)
+.data/

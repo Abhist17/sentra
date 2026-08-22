@@ -1,0 +1,60 @@
+name: Deploy dashboard
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "sentra/frontend/**"
+      - ".github/workflows/deploy-pages.yml"
+  workflow_dispatch:
+
+# Allow one deployment at a time; cancel superseded runs rather than queueing.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: sentra/frontend/package-lock.json
+
+      - uses: actions/configure-pages@v5
+
+      - name: Build static export
+        working-directory: sentra/frontend
+        env:
+          # Pages serves from /<repo>, so assets need the repo name prefixed.
+          NEXT_PUBLIC_BASE_PATH: /${{ github.event.repository.name }}
+          # No public engine by default — viewers point the dashboard at their
+          # own via the in-app "Connect to an engine" dialog. Set this repo
+          # variable to a deployed backend URL to give it a default.
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+        run: |
+          npm ci
+          npm run build
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: sentra/frontend/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

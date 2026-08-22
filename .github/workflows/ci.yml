@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sentra/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: sentra/backend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      # The quant-core tests are pure functions — no network, no RPC.
+      - run: npm test
+      - run: npm run build
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sentra/frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: sentra/frontend/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+  program:
+    name: Anchor program
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.89.0"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: sentra
+      # Type-checks the program without the SBF toolchain, which is a ~500MB
+      # download and not needed to catch compile errors.
+      - run: cargo check -p sentra --manifest-path sentra/Cargo.toml

@@ -1,0 +1,74 @@
+# Render blueprint — deploys the Sentra engine (backend).
+#
+#   1. Push this repo to GitHub
+#   2. Render dashboard → New → Blueprint → pick this repo
+#   3. Fill in the prompted secrets (all optional; the engine runs without them)
+#
+# The dashboard (frontend) is a static export and is deployed separately to
+# GitHub Pages by .github/workflows/deploy-pages.yml.
+
+services:
+  - type: web
+    name: sentra-engine
+    runtime: node
+    plan: free
+    region: oregon
+    rootDir: sentra/backend
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+
+    # The wallet registry and price-history cache live here. Without a disk
+    # they reset on every deploy and cold start.
+    disk:
+      name: sentra-data
+      mountPath: /var/data
+      sizeGB: 1
+
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: DATA_DIR
+        value: /var/data
+
+      # Cluster risk snapshots are WRITTEN to. Devnet unless you deploy the
+      # program elsewhere.
+      - key: RPC_URL
+        value: https://api.devnet.solana.com
+
+      # Cluster real balances are READ from. The public endpoint rate-limits
+      # hard — set a Helius/QuickNode URL for anything beyond a demo.
+      - key: MAINNET_RPC_URL
+        sync: false
+
+      # Lock this to your dashboard's origin once it is deployed, e.g.
+      # https://<user>.github.io — "*" leaves the API open to any page.
+      - key: CORS_ORIGIN
+        value: "*"
+
+      # Protects /wallet/add, /wallet/remove and /test/*. Generated for you;
+      # without it anyone can add wallets and spam your Telegram bot.
+      - key: API_KEY
+        generateValue: true
+
+      - key: MONITOR_INTERVAL
+        value: "60000"
+      - key: RISK_ALERT_THRESHOLD
+        value: "25"
+
+      # Optional — leave blank to run without alerts.
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+
+      # Optional — raises the CoinGecko rate limit.
+      - key: COINGECKO_API_KEY
+        sync: false
+
+      # Writing snapshots on-chain rents a new account per interval, so it
+      # costs SOL continuously. Requires SOLANA_SECRET_KEY.
+      - key: ENABLE_ONCHAIN_WRITES
+        value: "false"
+      - key: SOLANA_SECRET_KEY
+        sync: false
