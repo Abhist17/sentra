@@ -7,3 +7,5 @@ test-ledger
 .yarn
 test-keypair.json
 dist
+.data
+.next

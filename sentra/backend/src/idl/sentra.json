@@ -8,6 +8,62 @@
   },
   "instructions": [
     {
+      "name": "close_snapshot",
+      "discriminator": [
+        10,
+        135,
+        141,
+        56,
+        1,
+        123,
+        162,
+        186
+      ],
+      "accounts": [
+        {
+          "name": "snapshot",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  105,
+                  115,
+                  107,
+                  95,
+                  115,
+                  110,
+                  97,
+                  112,
+                  115,
+                  104,
+                  111,
+                  116
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "user"
+              },
+              {
+                "kind": "account",
+                "path": "snapshot.timestamp",
+                "account": "RiskSnapshot"
+              }
+            ]
+          }
+        },
+        {
+          "name": "user",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "initialize_preferences",
       "discriminator": [
         74,
@@ -285,6 +341,11 @@
       "code": 6002,
       "name": "InvalidRiskScore",
       "msg": "Risk score must be between 0 and 100"
+    },
+    {
+      "code": 6003,
+      "name": "TimestampOutOfRange",
+      "msg": "Timestamp is too far from the cluster clock"
     }
   ],
   "types": [
@@ -304,6 +365,10 @@
           {
             "name": "threshold",
             "type": "u8"
+          },
+          {
+            "name": "breached",
+            "type": "bool"
           },
           {
             "name": "timestamp",
@@ -332,6 +397,10 @@
           {
             "name": "last_updated",
             "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
           }
         ]
       }
@@ -352,6 +421,10 @@
           {
             "name": "timestamp",
             "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
           }
         ]
       }

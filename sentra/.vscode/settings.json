@@ -1,0 +1,42 @@
+{
+  // ── Why this file exists ────────────────────────────────────────
+  // rust-analyzer expands Anchor's proc macros itself. Two settings
+  // matter, and the defaults get both wrong for an Anchor workspace:
+  //
+  //  1. `cargo.features: []` — pinning to default features. With "all",
+  //     rust-analyzer turns on `anchor-debug`, whose codegen references the
+  //     monolithic `solana-program` crate that anchor-lang 0.32 no longer
+  //     depends on. That surfaces as E0433 on every #[derive(Accounts)].
+  //
+  //  2. `procMacro.ignored` — rust-analyzer cannot fully expand the
+  //     IDL-generation code inside #[program] / #[account] / #[event], and
+  //     reports the unexpanded output as
+  //       "expected String, found ()"
+  //       "expected Vec<IdlInstructionAccountItem>, found ()"
+  //     on the macro attribute lines. Those are expansion artifacts, not real
+  //     errors — `cargo check` and `anchor build` both pass. Ignoring these
+  //     macros for expansion silences the phantom diagnostics.
+  "rust-analyzer.cargo.features": [],
+  "rust-analyzer.cargo.buildScripts.enable": true,
+  "rust-analyzer.procMacro.enable": true,
+  "rust-analyzer.procMacro.ignored": {
+    "anchor-lang": ["account", "constant", "error_code", "event", "program"],
+    "anchor-attribute-account": ["account", "declare_id", "zero_copy"],
+    "anchor-attribute-error": ["error_code"],
+    "anchor-attribute-event": ["event", "emit"],
+    "anchor-attribute-program": ["program"],
+    "anchor-derive-accounts": ["Accounts"],
+    "anchor-derive-serde": ["AnchorSerialize", "AnchorDeserialize"],
+    "anchor-derive-space": ["InitSpace"]
+  },
+  "rust-analyzer.linkedProjects": ["./Cargo.toml"],
+  "rust-analyzer.check.command": "check",
+
+  // Keep the TS side of the workspace tidy too.
+  "editor.formatOnSave": false,
+  "files.exclude": {
+    "**/target": true,
+    "**/.anchor": true,
+    "**/test-ledger": true
+  }
+}

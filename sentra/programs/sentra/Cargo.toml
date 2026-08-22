@@ -15,6 +15,14 @@ no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build"]
+# Declared because Anchor's macros always emit `cfg(feature = "anchor-debug")`
+# and rustc warns on an unknown cfg value otherwise.
+#
+# Do NOT enable it. anchor-lang 0.32.1 moved to the split solana-* crates and
+# no longer depends on the monolithic `solana-program`, but its anchor-debug
+# codegen still emits absolute `::solana_program::log::…` paths, so turning it
+# on fails with E0433. That is why `cargo check --all-features` breaks here,
+# and why .vscode/settings.json pins rust-analyzer to explicit features.
 anchor-debug = []
 custom-heap = []
 custom-panic = []

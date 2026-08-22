@@ -1,2 +1,9 @@
-[build]
-rustflags = ["--cfg", "feature=\"anchor-debug\""]
+# NOTE: this file previously set
+#   rustflags = ["--cfg", "feature=\"anchor-debug\""]
+# which forces the `anchor-debug` cfg on for EVERY crate in the graph, not just
+# this program. That activates anchor-lang's debug logging paths in modules
+# that never import `solana_program`, and the workspace stops compiling with
+# `E0433: could not find solana_program`.
+#
+# Enable the feature the normal way instead, per-crate:
+#   cargo build --features anchor-debug
