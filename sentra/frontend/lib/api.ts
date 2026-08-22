@@ -61,6 +61,14 @@ export function hasApiOverride(): boolean {
 
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
 
+/**
+ * A request that never settles is worse than one that fails: the dashboard
+ * sits on a loading skeleton with nothing to retry. Browsers do not time out
+ * fetch by default, and a blocked private-network preflight hangs rather than
+ * rejecting, so every call carries its own deadline.
+ */
+const REQUEST_TIMEOUT_MS = 12_000;
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -80,17 +88,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     res = await fetch(`${base}${path}`, {
       ...init,
       cache: "no-store",
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: {
         "Content-Type": "application/json",
         ...(API_KEY ? { "x-api-key": API_KEY } : {}),
         ...init?.headers,
       },
     });
-  } catch {
+  } catch (err) {
     // A network-level failure has no status and no body — the raw
     // "Failed to fetch" tells the user nothing actionable.
+    const timedOut = err instanceof DOMException && err.name === "TimeoutError";
     throw new ApiError(
-      `Cannot reach a Sentra engine at ${base}.`,
+      timedOut
+        ? `No response from ${base} within ${REQUEST_TIMEOUT_MS / 1000}s.`
+        : `Cannot reach a Sentra engine at ${base}.`,
       undefined,
       "network"
     );

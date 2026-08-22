@@ -107,6 +107,12 @@ Then open the hosted dashboard and use **Connect to an engine** → `http://loca
 No API keys, no wallet, no Solana toolchain required — the engine runs read-only
 out of the box and ships with a demo wallet already monitored.
 
+> Browsers block a page served over HTTPS from calling a loopback address
+> unless the server opts in. The engine sends the required
+> `Access-Control-Allow-Private-Network` header by default, which is what makes
+> this work. If you would rather not have that, set `ALLOW_PRIVATE_NETWORK=false`
+> and run the dashboard locally too — see below.
+
 ### Or run the whole stack
 
 ```bash
@@ -139,6 +145,7 @@ cache, generates an `API_KEY` for the write routes, and sets a health check.
 |:--|:--|
 | `MAINNET_RPC_URL` | The public Solana endpoint rate-limits hard. Use Helius or QuickNode. |
 | `CORS_ORIGIN` | Lock to your dashboard's origin instead of `*`. |
+| `ALLOW_PRIVATE_NETWORK` | Leave `true` only if you drive this engine from a page on another origin. |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Enables alerts. |
 | `COINGECKO_API_KEY` | Raises the price-feed rate limit. |
 

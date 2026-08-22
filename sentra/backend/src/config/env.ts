@@ -51,6 +51,13 @@ export const CONFIG = {
   // Requests per minute per IP before the API starts returning 429
   RATE_LIMIT_PER_MIN: num("RATE_LIMIT_PER_MIN", 120),
 
+  // Chrome blocks requests from a public page to a loopback/private address
+  // unless the server opts in via Access-Control-Allow-Private-Network. That
+  // opt-in is what lets the hosted dashboard talk to a locally run engine.
+  // Turn it off if this engine is deployed publicly and never driven from a
+  // page on another origin.
+  ALLOW_PRIVATE_NETWORK: bool("ALLOW_PRIVATE_NETWORK", true),
+
   // Where the wallet registry and price-history cache are persisted.
   DATA_DIR: process.env.DATA_DIR || path.join(process.cwd(), ".data"),
 

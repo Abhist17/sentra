@@ -21,7 +21,27 @@ export function startServer(): Server {
           .map((o) => o.trim())
           .filter(Boolean);
 
-  app.use(cors({ origin }));
+  // Private Network Access: a page on a public origin (the hosted dashboard)
+  // fetching http://localhost is a "private network request", which Chrome
+  // preflights and then blocks unless the response carries this header. Set
+  // before cors(), which terminates the preflight itself.
+  app.use((req, res, next) => {
+    if (
+      CONFIG.ALLOW_PRIVATE_NETWORK &&
+      req.headers["access-control-request-private-network"]
+    ) {
+      res.setHeader("Access-Control-Allow-Private-Network", "true");
+    }
+    next();
+  });
+
+  app.use(
+    cors({
+      origin,
+      allowedHeaders: ["Content-Type", "x-api-key"],
+      maxAge: 600,
+    })
+  );
   // Cap the body size — the API takes nothing bigger than an address + label.
   app.use(express.json({ limit: "16kb" }));
 
@@ -34,6 +54,12 @@ export function startServer(): Server {
     console.log(
       `   Write routes: ${CONFIG.API_KEY ? "API key required" : "UNPROTECTED"}`
     );
+    if (CONFIG.ALLOW_PRIVATE_NETWORK && CONFIG.CORS_ORIGIN === "*") {
+      console.log(
+        "   ⚠️  Reachable from any public page (CORS_ORIGIN=* and " +
+          "ALLOW_PRIVATE_NETWORK=true). Set CORS_ORIGIN to your dashboard."
+      );
+    }
   });
 
   server.on("error", (err: NodeJS.ErrnoException) => {
