@@ -1,0 +1,252 @@
+@import "tailwindcss";
+
+/* ═══════════════════════════════════════════════════════════════
+   Sentra — design tokens
+
+   The interface chrome is deliberately monochrome. Colour is
+   reserved for information: risk severity and asset allocation.
+   Nothing is tinted for decoration, so when something is coloured
+   on this page it means something.
+   ═══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* Surfaces — neutral greys, no blue cast */
+  --bg: #0a0a0b;
+  --bg-subtle: #0e0e10;
+  --surface: #141416;
+  --surface-hover: #1a1a1d;
+  --surface-active: #202024;
+
+  /* Hairlines */
+  --border: #232327;
+  --border-strong: #313137;
+
+  /* Type */
+  --text: #ececee;
+  --text-secondary: #9d9da6;
+  --text-tertiary: #6a6a73;
+
+  /* Interaction — near-white primary, the Vercel/Linear convention */
+  --primary: #ececee;
+  --primary-text: #0a0a0b;
+  --focus: #5b7fd4;
+
+  /* Risk ramp — desaturated so a dashboard full of them stays calm */
+  --calm: #4f9d76;
+  --watch: #bf9b4f;
+  --elevated: #c2804f;
+  --severe: #c25f5f;
+
+  /* Allocation categoricals — muted, distinguishable, equal weight */
+  --asset-1: #7c8dd6;
+  --asset-2: #bf9b4f;
+  --asset-3: #9d84bd;
+  --asset-4: #6b95b8;
+  --asset-other: #6a6a73;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.28);
+  --shadow-md: 0 4px 16px -4px rgb(0 0 0 / 0.4);
+}
+
+[data-theme="light"] {
+  --bg: #fcfcfd;
+  --bg-subtle: #f7f7f8;
+  --surface: #ffffff;
+  --surface-hover: #f5f5f6;
+  --surface-active: #ededf0;
+
+  --border: #e6e6e9;
+  --border-strong: #d3d3d8;
+
+  --text: #18181b;
+  --text-secondary: #56565f;
+  --text-tertiary: #86868f;
+
+  --primary: #18181b;
+  --primary-text: #ffffff;
+  --focus: #3b62c4;
+
+  /* Darkened for contrast against white */
+  --calm: #17795a;
+  --watch: #8f6a12;
+  --elevated: #a35a1d;
+  --severe: #ad3535;
+
+  --asset-1: #4c5fa8;
+  --asset-2: #8f6a12;
+  --asset-3: #6f5591;
+  --asset-4: #3f6b8f;
+  --asset-other: #86868f;
+
+  --shadow-sm: 0 1px 2px rgb(16 16 20 / 0.06);
+  --shadow-md: 0 4px 16px -4px rgb(16 16 20 / 0.1);
+}
+
+/* `inline` makes each utility compile to var(--token), so a theme swap on
+   the root element re-colours the page without regenerating any CSS. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-subtle: var(--bg-subtle);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-active: var(--surface-active);
+
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-text: var(--text);
+  --color-secondary: var(--text-secondary);
+  --color-tertiary: var(--text-tertiary);
+
+  --color-primary: var(--primary);
+  --color-primary-text: var(--primary-text);
+  --color-focus: var(--focus);
+
+  --color-calm: var(--calm);
+  --color-watch: var(--watch);
+  --color-elevated: var(--elevated);
+  --color-severe: var(--severe);
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo,
+    Consolas, monospace;
+}
+
+/* ── Base ──────────────────────────────────────────────────────── */
+html {
+  background-color: var(--bg);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Figures must align column-to-column and never reflow as digits change. */
+@utility numeric {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  letter-spacing: -0.01em;
+}
+
+/* Small caps section label — one consistent treatment everywhere. */
+@utility label {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+@utility card {
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+/* ── Motion ────────────────────────────────────────────────────── */
+/* Interface motion is limited to state feedback: nothing loops except the
+   live indicator, and nothing moves that the user did not cause. */
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.enter {
+  animation: fade-up 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.breathe {
+  animation: breathe 2.4s ease-in-out infinite;
+}
+
+@keyframes skeleton {
+  0% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.85;
+  }
+  100% {
+    opacity: 0.5;
+  }
+}
+
+.skeleton {
+  background-color: var(--surface-hover);
+  border-radius: 6px;
+  animation: skeleton 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ── Chrome ────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 99px;
+  border: 3px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-tertiary);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--focus) 32%, transparent);
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Inputs inherit nothing useful by default.
+   This MUST stay inside @layer base: unlayered rules outrank @layer utilities
+   in Tailwind v4, so an unlayered `color: inherit` here would override every
+   text-* utility applied to a button. */
+@layer base {
+  input,
+  button {
+    font: inherit;
+    color: inherit;
+  }
+}
