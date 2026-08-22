@@ -1,10 +1,11 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Connection, PublicKey } from "@solana/web3.js";
-import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID } from "@solana/spl-token";
 import fs from "fs";
 import os from "os";
 import path from "path";
 import { CONFIG } from "../config/env";
+import { ASSET_SYMBOLS } from "./price.service";
 
 // Bundled at build time so the service works from `dist/` and from any CWD.
 // Regenerate with `anchor build && cp target/idl/sentra.json backend/src/idl/`.
@@ -13,12 +14,50 @@ import IDL from "../idl/sentra.json";
 // Known SPL token mint addresses (mainnet)
 export const TOKEN_MINTS: Record<string, string> = {
   BONK: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
-  JUP:  "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+  JUP: "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
   USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
 };
 
+const MINT_TO_SYMBOL: Record<string, string> = Object.fromEntries(
+  Object.entries(TOKEN_MINTS).map(([symbol, mint]) => [mint, symbol])
+);
+
 // ── Dual RPC setup ───────────────────────────────────────────────
 const mainnetConnection = new Connection(CONFIG.MAINNET_RPC_URL, "confirmed");
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Public Solana RPC endpoints answer bursts with 429s. Without a retry a
+ * single rate limit dropped the wallet from that whole tick.
+ */
+async function rpcWithRetry<T>(
+  label: string,
+  fn: () => Promise<T>,
+  attempts = 3
+): Promise<T> {
+  let lastErr: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const message = err instanceof Error ? err.message : String(err);
+      const retriable = /429|rate|timeout|ECONN|socket|fetch failed/i.test(
+        message
+      );
+      if (!retriable || attempt === attempts - 1) break;
+      await sleep(1000 * 2 ** attempt);
+    }
+  }
+
+  throw new Error(
+    `${label} failed: ${
+      lastErr instanceof Error ? lastErr.message : String(lastErr)
+    }`
+  );
+}
 
 /**
  * Loads the server signing keypair, in priority order:
@@ -90,72 +129,102 @@ function resolveSigner(): anchor.web3.Keypair {
   }
 }
 
-export function createProvider() {
+// Provider and program are process-wide singletons. Building them per request
+// opened a fresh RPC connection (and minted a throwaway keypair) on every
+// call to /snapshots.
+let cachedProvider: anchor.AnchorProvider | null = null;
+let cachedProgram: anchor.Program | null = null;
+
+export function createProvider(): anchor.AnchorProvider {
+  if (cachedProvider) return cachedProvider;
+
   const connection = new Connection(CONFIG.RPC_URL, "confirmed");
-  const wallet     = new anchor.Wallet(resolveSigner());
-  const provider   = new anchor.AnchorProvider(connection, wallet, {});
-  anchor.setProvider(provider);
-  return provider;
+  const wallet = new anchor.Wallet(resolveSigner());
+  cachedProvider = new anchor.AnchorProvider(connection, wallet, {
+    commitment: "confirmed",
+  });
+  anchor.setProvider(cachedProvider);
+  return cachedProvider;
 }
 
-export function getProgram(provider: anchor.AnchorProvider) {
-  return new anchor.Program(IDL as anchor.Idl, provider);
+export function getProgram(provider?: anchor.AnchorProvider): anchor.Program {
+  if (cachedProgram) return cachedProgram;
+  cachedProgram = new anchor.Program(
+    IDL as anchor.Idl,
+    provider ?? createProvider()
+  );
+  return cachedProgram;
+}
+
+export function getMainnetConnection() {
+  return mainnetConnection;
+}
+
+// ── Portfolio ────────────────────────────────────────────────────
+
+export interface Holding {
+  symbol: string;
+  amount: number;
 }
 
 /**
- * Fetches wallet portfolio (REAL + SIMULATION fallback)
+ * Reads real balances for `walletAddress` from mainnet.
+ *
+ * Note this always reads mainnet regardless of RPC_URL: RPC_URL points at the
+ * cluster we WRITE snapshots to (devnet/localnet), which has no real balances.
  */
 export async function fetchWalletPortfolio(
-  _connection: Connection,
   walletAddress: PublicKey
-): Promise<{ symbol: string; amount: number }[]> {
+): Promise<Holding[]> {
+  const solRaw = await rpcWithRetry("getBalance", () =>
+    mainnetConnection.getBalance(walletAddress)
+  );
+  const solBalance = solRaw / anchor.web3.LAMPORTS_PER_SOL;
 
-  const solRaw = await mainnetConnection.getBalance(walletAddress);
-  const solBalance = solRaw / 1e9;
+  const tokenBalances: Record<string, number> = { BONK: 0, JUP: 0, USDC: 0 };
 
-  const tokenBalances: Record<string, number> = {
-    BONK: 0, JUP: 0, USDC: 0,
-  };
+  // Token-2022 mints live under a different program id and are invisible to a
+  // TOKEN_PROGRAM_ID-only query.
+  for (const programId of [TOKEN_PROGRAM_ID, TOKEN_2022_PROGRAM_ID]) {
+    try {
+      const tokenAccounts = await rpcWithRetry(
+        "getParsedTokenAccountsByOwner",
+        () =>
+          mainnetConnection.getParsedTokenAccountsByOwner(walletAddress, {
+            programId,
+          })
+      );
 
-  try {
-    const tokenAccounts = await mainnetConnection.getParsedTokenAccountsByOwner(
-      walletAddress,
-      { programId: TOKEN_PROGRAM_ID }
-    );
+      for (const { account } of tokenAccounts.value) {
+        const parsed = (account.data as any).parsed?.info;
+        const mint = parsed?.mint as string | undefined;
+        const amount = parsed?.tokenAmount?.uiAmount as number | undefined;
+        if (!mint || !Number.isFinite(amount) || !amount || amount <= 0) continue;
 
-    for (const { account } of tokenAccounts.value) {
-      const parsed = account.data.parsed?.info;
-      const mint   = parsed?.mint as string;
-      const amount = parsed?.tokenAmount?.uiAmount as number;
-
-      for (const [symbol, mintAddress] of Object.entries(TOKEN_MINTS)) {
-        if (mint === mintAddress && amount > 0) {
-          tokenBalances[symbol] = amount;
-        }
+        const symbol = MINT_TO_SYMBOL[mint];
+        // A wallet can hold the same mint across several token accounts.
+        if (symbol) tokenBalances[symbol] += amount;
       }
+    } catch (err) {
+      console.warn(
+        `⚠️  Could not fetch SPL tokens (${programId.toBase58().slice(0, 8)}…):`,
+        err instanceof Error ? err.message : err
+      );
     }
-  } catch {
-    console.warn("⚠️ Could not fetch SPL tokens");
   }
 
-  // 🔥 REAL PORTFOLIO
-  let portfolio = [
-    { symbol: "SOL",  amount: solBalance },
+  let portfolio: Holding[] = [
+    { symbol: "SOL", amount: solBalance },
     { symbol: "BONK", amount: tokenBalances.BONK },
-    { symbol: "JUP",  amount: tokenBalances.JUP },
+    { symbol: "JUP", amount: tokenBalances.JUP },
     { symbol: "USDC", amount: tokenBalances.USDC },
   ];
 
-  const totalBalance =
-    solBalance +
-    tokenBalances.BONK +
-    tokenBalances.JUP +
-    tokenBalances.USDC;
+  const totalBalance = portfolio.reduce((sum, h) => sum + h.amount, 0);
 
-  // 🔥 SIMULATION FALLBACK
+  // Demo fallback for an empty wallet — off unless SIMULATION_MODE is set.
   if (CONFIG.SIMULATION_MODE && totalBalance === 0) {
-    console.log("⚠️ Using simulated portfolio for empty wallet");
-
+    console.log("⚠️  Using simulated portfolio for empty wallet");
     portfolio = [
       { symbol: "SOL", amount: 5 },
       { symbol: "JUP", amount: 200 },
@@ -163,8 +232,10 @@ export async function fetchWalletPortfolio(
     ];
   }
 
-  return portfolio;
+  return portfolio.filter((h) => ASSET_SYMBOLS.includes(h.symbol as any));
 }
+
+// ── Program PDAs & instructions ──────────────────────────────────
 
 export function derivePreferencePda(user: PublicKey, programId: PublicKey) {
   return PublicKey.findProgramAddressSync(
@@ -195,20 +266,21 @@ export async function ensurePreferenceInitialized(
 ) {
   const [preferencePda] = derivePreferencePda(user, program.programId);
 
-  try {
-    await (program as any).account.riskPreference.fetch(preferencePda);
-  } catch {
-    console.log("Initializing preference PDA for", user.toBase58());
-    await program.methods
-      .initializePreferences(defaultThreshold)
-      .accounts({
-        preference: preferencePda,
-        user,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
-      .rpc();
-    console.log("✅ Preference PDA initialized");
-  }
+  const existing = await program.provider.connection.getAccountInfo(
+    preferencePda
+  );
+  if (existing) return;
+
+  console.log("Initializing preference PDA for", user.toBase58());
+  await program.methods
+    .initializePreferences(defaultThreshold)
+    .accounts({
+      preference: preferencePda,
+      user,
+      systemProgram: anchor.web3.SystemProgram.programId,
+    })
+    .rpc();
+  console.log("✅ Preference PDA initialized");
 }
 
 export async function recordRiskScoreOnChain(
@@ -216,26 +288,44 @@ export async function recordRiskScoreOnChain(
   user: PublicKey,
   riskScore: number
 ) {
+  // The program rejects anything above 100 — clamp here so a runaway blended
+  // score surfaces as a capped snapshot rather than a failed transaction.
+  const score = Math.max(0, Math.min(100, Math.round(riskScore)));
+
   await ensurePreferenceInitialized(program, user);
 
-  const timestamp   = Math.floor(Date.now() / 1000);
+  const timestamp = Math.floor(Date.now() / 1000);
   const timestampBN = new anchor.BN(timestamp);
 
   const [preferencePda] = derivePreferencePda(user, program.programId);
-  const [snapshotPda]   = deriveSnapshotPda(user, timestampBN, program.programId);
+  const [snapshotPda] = deriveSnapshotPda(
+    user,
+    timestampBN,
+    program.programId
+  );
+
+  // Snapshot PDAs are seeded by second, so two writes in the same second
+  // collide on an already-initialized account.
+  const existing = await program.provider.connection.getAccountInfo(
+    snapshotPda
+  );
+  if (existing) {
+    console.log(`⏭️  Snapshot for ${timestamp} already exists, skipping`);
+    return;
+  }
 
   await program.methods
-    .recordRiskScore(riskScore, timestampBN)
+    .recordRiskScore(score, timestampBN)
     .accounts({
       preference: preferencePda,
-      snapshot:   snapshotPda,
+      snapshot: snapshotPda,
       user,
       systemProgram: anchor.web3.SystemProgram.programId,
     })
     .rpc();
 
   console.log(
-    `✅ Risk score ${riskScore} recorded on-chain for ${user
+    `✅ Risk score ${score} recorded on-chain for ${user
       .toBase58()
       .slice(0, 8)}...`
   );
@@ -248,7 +338,7 @@ export async function fetchUserSnapshots(
   const snapshots = await (program as any).account.riskSnapshot.all([
     {
       memcmp: {
-        offset: 8,
+        offset: 8, // 8-byte account discriminator, then `owner`
         bytes: user.toBase58(),
       },
     },

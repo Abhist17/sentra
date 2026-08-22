@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import path from "path";
 dotenv.config();
 
 function num(key: string, fallback: number): number {
@@ -11,6 +12,19 @@ function num(key: string, fallback: number): number {
     return fallback;
   }
 
+  return parsed;
+}
+
+/** Same as num() but refuses values outside [min, max] instead of letting a
+ *  typo like MONITOR_INTERVAL=15 (15ms) hammer every upstream API. */
+function clampedNum(key: string, fallback: number, min: number, max: number) {
+  const parsed = num(key, fallback);
+  if (parsed < min || parsed > max) {
+    console.warn(
+      `⚠️  ${key}=${parsed} is outside [${min}, ${max}] — using ${fallback}`
+    );
+    return fallback;
+  }
   return parsed;
 }
 
@@ -34,6 +48,11 @@ export const CONFIG = {
   CORS_ORIGIN: process.env.CORS_ORIGIN || "*",
   // When set, mutating routes require header `x-api-key: <this>`
   API_KEY: process.env.API_KEY || "",
+  // Requests per minute per IP before the API starts returning 429
+  RATE_LIMIT_PER_MIN: num("RATE_LIMIT_PER_MIN", 120),
+
+  // Where the wallet registry and price-history cache are persisted.
+  DATA_DIR: process.env.DATA_DIR || path.join(process.cwd(), ".data"),
 
   // ── Wallet / signing ─────────────────────────────────────
   // Either an inline secret key (base58 or JSON array) or a path to a keypair
@@ -41,11 +60,24 @@ export const CONFIG = {
   SOLANA_KEYPAIR_PATH: process.env.SOLANA_KEYPAIR_PATH || "",
 
   // ── Engine tuning ────────────────────────────────────────
-  MONITOR_INTERVAL: num("MONITOR_INTERVAL", 30 * 1000),
-  HISTORY_REFRESH_INTERVAL: num("HISTORY_REFRESH_INTERVAL", 60 * 60 * 1000),
+  // Floor of 10s: CoinGecko's free tier rate-limits below that, and the
+  // engine's own tick cannot finish faster anyway.
+  MONITOR_INTERVAL: clampedNum("MONITOR_INTERVAL", 30_000, 10_000, 3_600_000),
+  HISTORY_REFRESH_INTERVAL: clampedNum(
+    "HISTORY_REFRESH_INTERVAL",
+    60 * 60 * 1000,
+    5 * 60 * 1000,
+    24 * 60 * 60 * 1000
+  ),
+  // Days of price history behind the covariance matrix
+  HISTORY_DAYS: clampedNum("HISTORY_DAYS", 30, 2, 365),
   SHOCK_THRESHOLD: num("SHOCK_THRESHOLD", 5),
   RISK_ALERT_THRESHOLD: num("RISK_ALERT_THRESHOLD", 25),
   ALERT_COOLDOWN: num("ALERT_COOLDOWN", 5 * 60 * 1000),
+  // Points of risk history kept in memory per wallet (drives the UI chart)
+  HISTORY_POINTS: clampedNum("HISTORY_POINTS", 240, 10, 5_000),
+  // Ceiling on monitored wallets — each one costs an RPC call per tick
+  MAX_WALLETS: clampedNum("MAX_WALLETS", 25, 1, 500),
 
   // Fall back to a synthetic portfolio when a monitored wallet is empty.
   // Useful for demos — must be off for real reporting.

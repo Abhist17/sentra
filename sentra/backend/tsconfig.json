@@ -10,5 +10,9 @@
     "resolveJsonModule": true,
     "outDir": "./dist",
     "rootDir": "./src"
-  }
+  },
+  "include": ["src/**/*"],
+  // Tests are dev-only — without this they were compiled into dist/ and
+  // shipped with the production build.
+  "exclude": ["node_modules", "dist", "src/__tests__"]
 }
