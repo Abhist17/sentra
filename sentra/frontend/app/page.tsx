@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useOverview } from "@/lib/hooks";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useOverview, useListKeyboardNav } from "@/lib/hooks";
 import { resolveApiUrl } from "@/lib/api";
 import { usd, pct, timeAgo } from "@/lib/format";
 import { TopBar } from "@/components/TopBar";
@@ -10,6 +10,7 @@ import { SummaryPanel } from "@/components/SummaryPanel";
 import { TrendChart } from "@/components/TrendChart";
 import { HoldingsTable } from "@/components/HoldingsTable";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
+import { RiskAttribution } from "@/components/RiskAttribution";
 import { WalletList } from "@/components/WalletList";
 import { PriceList, StressPanel } from "@/components/MarketPanel";
 import {
@@ -23,7 +24,7 @@ import {
 } from "@/components/ui";
 
 export default function Dashboard() {
-  const { data, error, loading, refreshing, refresh } = useOverview(10_000);
+  const { data, error, loading, refreshing, refresh, demo } = useOverview(10_000);
   const [selected, setSelected] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -48,6 +49,23 @@ export default function Dashboard() {
     () => data?.wallets.find((w) => w.address === selected) ?? null,
     [data, selected]
   );
+
+  const wallets = data?.wallets ?? [];
+  const activeIndex = wallets.findIndex((w) => w.address === selected);
+
+  useListKeyboardNav({
+    count: wallets.length,
+    index: activeIndex < 0 ? 0 : activeIndex,
+    onSelect: useCallback(
+      (next: number) => setSelected(wallets[next]?.address ?? null),
+      [wallets]
+    ),
+    onAdd: useCallback(() => {
+      document
+        .querySelector<HTMLButtonElement>("[data-add-wallet]")
+        ?.click();
+    }, []),
+  });
 
   const settings = (
     <EngineUrlDialog
@@ -74,11 +92,12 @@ export default function Dashboard() {
 
   if (!data) return <LoadingView />;
 
-  const { totals, market, config, wallets } = data;
+  const { totals, market, config } = data;
 
   return (
     <div className="min-h-screen">
       <TopBar
+        demo={demo}
         lastTickAt={market.lastTickAt}
         lastTickError={market.lastTickError}
         pricesStale={market.pricesStale}
@@ -89,6 +108,29 @@ export default function Dashboard() {
       {settings}
 
       <main className="mx-auto max-w-[1600px] px-4 py-5 sm:px-6">
+        {demo && (
+          <div className="mb-4">
+            <Notice tone="info">
+              <span className="flex flex-wrap items-baseline gap-x-1.5">
+                <span className="font-medium text-text">Demo data.</span>
+                <span>
+                  No engine is connected, so these figures are synthetic —
+                  two example books chosen to show how similar balances can
+                  carry very different risk.
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSettingsOpen(true)}
+                  className="font-medium text-text underline underline-offset-2 hover:opacity-70"
+                >
+                  Connect an engine
+                </button>
+                <span>for live numbers.</span>
+              </span>
+            </Notice>
+          </div>
+        )}
+
         {(error || market.lastTickError) && (
           <div className="mb-4 space-y-2">
             {error && (
@@ -131,16 +173,28 @@ export default function Dashboard() {
             </Panel>
 
             <Panel delay={80}>
-              <PanelHeader title="Engine" />
+              <PanelHeader
+                title="Engine"
+                meta={demo ? "not connected" : undefined}
+              />
               <dl className="px-4 py-3">
                 <Row
                   label="Poll interval"
-                  value={`${Math.round(config.monitorInterval / 1000)}s`}
+                  value={
+                    demo ? "—" : `${Math.round(config.monitorInterval / 1000)}s`
+                  }
                 />
-                <Row label="Last tick" value={timeAgo(market.lastTickAt)} />
+                <Row
+                  label="Last tick"
+                  value={demo ? "—" : timeAgo(market.lastTickAt)}
+                />
                 <Row
                   label="Return series"
-                  value={`${market.historyAssets}/${config.trackedAssets.length}`}
+                  value={
+                    demo
+                      ? "—"
+                      : `${market.historyAssets}/${config.trackedAssets.length}`
+                  }
                 />
                 <Row
                   label="Alert threshold"
@@ -244,6 +298,22 @@ export default function Dashboard() {
 
               <div className="space-y-4">
                 <Panel delay={120}>
+                  <PanelHeader
+                    title="Where the risk is"
+                    meta="value vs risk"
+                  />
+                  {active?.metrics ? (
+                    <RiskAttribution metrics={active.metrics} />
+                  ) : (
+                    <EmptyState
+                      title="Nothing scored yet"
+                      body="Attribution appears once the engine values this wallet."
+                      compact
+                    />
+                  )}
+                </Panel>
+
+                <Panel delay={140}>
                   <PanelHeader title="Score composition" />
                   {active?.metrics ? (
                     <ScoreBreakdown metrics={active.metrics} />

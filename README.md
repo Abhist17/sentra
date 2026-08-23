@@ -82,6 +82,26 @@ under current conditions.
 The dashboard shows this breakdown for every wallet, so the number is never a
 black box — you can always see which component moved it.
 
+### Weight is not risk
+
+A balance readout says *"you hold 11% BONK"*. Sentra says *"BONK is 29% of what
+you stand to lose"*.
+
+The two diverge whenever an asset's volatility differs from its size, and the
+gap is the only part you can act on. Sentra splits portfolio VaR across assets
+by Euler allocation, so the components sum exactly to the total — an
+attribution, not a heuristic.
+
+| Asset | Share of value | Share of risk |
+|:--|--:|--:|
+| SOL | 76.4% | 70.9% |
+| BONK | 11.4% | **28.9%** |
+| USDC | 12.2% | 0.1% |
+
+It also reports a **diversification ratio**: weighted average standalone
+volatility over portfolio volatility. At 1.0 the holdings move as one and
+spreading across tickers is buying nothing.
+
 ### How the loss estimate is built
 
 Two models run on every tick, and the dashboard shows both:
@@ -123,8 +143,12 @@ Three details that matter more than they sound:
 
 **Hosted dashboard:** [abhist17.github.io/sentra](https://abhist17.github.io/sentra/)
 
-The dashboard is a static page that reads from whichever engine you point it at.
-Start one locally and it connects straight away:
+It opens with demo data — two example books holding similar value but carrying
+very different risk, which is the argument the whole product makes. Everything
+is labelled as synthetic; nothing pretends to be live.
+
+For real numbers, point it at an engine. Start one locally and it connects
+straight away:
 
 ```bash
 git clone https://github.com/Abhist17/sentra
@@ -205,6 +229,9 @@ Built as a working instrument rather than a landing page.
 - **Colour carries meaning, nothing else.** The interface is monochrome; colour
   appears only for risk band and asset allocation. When something is coloured on
   screen, it is telling you something.
+- **Keyboard-first.** `j`/`k` or arrows move between wallets, `/` adds one.
+- **Sparklines** in the wallet list: the current score says which book is worst
+  now, the shape says which is getting worse.
 - **Every figure is traceable.** The score breakdown shows exactly which
   component contributed what.
 - **Honest states.** A degraded price feed, a stale tick, an engine error and
@@ -317,10 +344,22 @@ npm run install:all      # backend + frontend dependencies
 npm run dev:backend      # engine  → :4000
 npm run dev:frontend     # dashboard → :3000
 
-npm run test:backend     # quant core + registry, no network required
+npm test                 # backend + frontend
 npm run typecheck        # both packages
 anchor test              # program integration tests
 ```
+
+### Tests
+
+118 tests, none of which need the network.
+
+| Suite | Count | Covers |
+|:--|--:|:--|
+| Quant core | 38 | Horizon scaling, EWMA, VaR/ES, historical simulation, Euler attribution |
+| Market signals | 17 | Drops, volatility window, correlation breakdown, stress bands |
+| HTTP API | 23 | Routing, validation, error mapping, API key, rate limiting, CORS |
+| Frontend | 29 | Formatting across eight orders of magnitude, risk bands, engine-URL resolution |
+| On-chain | 11 | PDA derivation, authorization, timestamp bounds, rent reclaim |
 
 ### Configuration
 

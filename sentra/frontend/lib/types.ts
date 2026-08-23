@@ -10,6 +10,16 @@ export interface Holding {
   weight: number;
 }
 
+export interface RiskContributionView {
+  symbol: string;
+  /** Share of portfolio VALUE, 0-1. */
+  weight: number;
+  /** Share of portfolio RISK, 0-1. Sums to 1. */
+  riskShare: number;
+  componentVarUsd: number;
+  volHorizon: number;
+}
+
 export interface RiskModelMeta {
   headline: "parametric" | "historical";
   horizonDays: number;
@@ -22,6 +32,9 @@ export interface RiskModelMeta {
   lambdaApplied: number;
   parametric: { varUsd: number; esUsd: number };
   historical: { varUsd: number; esUsd: number };
+  contributions: RiskContributionView[];
+  /** 1.0 = the book moves as one asset; higher means real diversification. */
+  diversificationRatio: number;
 }
 
 export interface WalletMetrics {
@@ -62,6 +75,8 @@ export interface WalletRow {
 }
 
 export interface Overview {
+  /** True when the payload is synthetic, not from a live engine. */
+  demo?: boolean;
   totals: {
     risk: number;
     portfolio: number;

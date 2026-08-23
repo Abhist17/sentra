@@ -10,6 +10,16 @@ export interface AssetHolding {
   weight: number;
 }
 
+export interface RiskContributionView {
+  symbol: string;
+  /** Share of portfolio VALUE, 0-1. */
+  weight: number;
+  /** Share of portfolio RISK, 0-1. Sums to 1. */
+  riskShare: number;
+  componentVarUsd: number;
+  volHorizon: number;
+}
+
 export interface RiskModelMeta {
   /** Which model produced the headline figure. */
   headline: "parametric" | "historical";
@@ -26,6 +36,10 @@ export interface RiskModelMeta {
   lambdaApplied: number;
   parametric: { varUsd: number; esUsd: number };
   historical: { varUsd: number; esUsd: number };
+  /** Per-asset attribution, largest risk contributor first. */
+  contributions: RiskContributionView[];
+  /** 1.0 = the book moves as one asset; higher means real diversification. */
+  diversificationRatio: number;
 }
 
 export interface WalletMetrics {

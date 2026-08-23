@@ -79,6 +79,7 @@ function ThemeToggle() {
 }
 
 export function TopBar({
+  demo = false,
   lastTickAt,
   lastTickError,
   pricesStale,
@@ -86,6 +87,7 @@ export function TopBar({
   onRefresh,
   onOpenSettings,
 }: {
+  demo?: boolean;
   lastTickAt: number;
   lastTickError: string | null;
   pricesStale: boolean;
@@ -96,11 +98,13 @@ export function TopBar({
   const mounted = useMounted();
   useNow(1000); // keeps the relative timestamp honest
 
-  const status = lastTickError
-    ? { color: "var(--severe)", text: "Engine error", pulse: false }
-    : pricesStale
-      ? { color: "var(--watch)", text: "Feed degraded", pulse: false }
-      : { color: "var(--calm)", text: "Live", pulse: true };
+  const status = demo
+    ? { color: "var(--text-tertiary)", text: "Demo", pulse: false }
+    : lastTickError
+      ? { color: "var(--severe)", text: "Engine error", pulse: false }
+      : pricesStale
+        ? { color: "var(--watch)", text: "Feed degraded", pulse: false }
+        : { color: "var(--calm)", text: "Live", pulse: true };
 
   return (
     <header className="sticky top-0 z-20 border-b border-border bg-bg/85 backdrop-blur-md">

@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getOverview, ApiError } from "./api";
+import { getOverview, ApiError, hasApiOverride } from "./api";
+import { buildDemoOverview } from "./demo";
 import type { Overview } from "./types";
 
 /**
@@ -55,6 +56,8 @@ export interface OverviewState {
   refreshing: boolean;
   refresh: () => Promise<void>;
   lastFetchedAt: number;
+  /** True when `data` is synthetic because no engine answered. */
+  demo: boolean;
 }
 
 /**
@@ -67,6 +70,7 @@ export function useOverview(intervalMs = 10_000): OverviewState {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastFetchedAt, setLastFetchedAt] = useState(0);
+  const [demo, setDemo] = useState(false);
 
   // Guards against a slow response from a previous poll overwriting a newer one.
   const requestId = useRef(0);
@@ -79,13 +83,27 @@ export function useOverview(intervalMs = 10_000): OverviewState {
       const next = await getOverview();
       if (id !== requestId.current) return;
       setData(next);
+      setDemo(false);
       setError(null);
       setLastFetchedAt(Date.now());
     } catch (err) {
       if (id !== requestId.current) return;
-      setError(
-        err instanceof ApiError ? err.message : "Unexpected error loading data"
-      );
+
+      const message =
+        err instanceof ApiError ? err.message : "Unexpected error loading data";
+
+      // With no engine reachable and no deliberate override, fall back to a
+      // synthetic dataset rather than showing an error card. A first-time
+      // visitor learns nothing from "connection refused"; the UI labels this
+      // as demo data throughout so it can never be mistaken for live figures.
+      if (!hasApiOverride()) {
+        setData(buildDemoOverview());
+        setDemo(true);
+        setError(null);
+        setLastFetchedAt(Date.now());
+      } else {
+        setError(message);
+      }
     } finally {
       if (id === requestId.current) {
         setLoading(false);
@@ -127,7 +145,7 @@ export function useOverview(intervalMs = 10_000): OverviewState {
     };
   }, [refresh, intervalMs]);
 
-  return { data, error, loading, refreshing, refresh, lastFetchedAt };
+  return { data, error, loading, refreshing, refresh, lastFetchedAt, demo };
 }
 
 /** Re-renders on a timer so "12s ago" labels stay honest. */
@@ -148,4 +166,58 @@ export function useMounted(): boolean {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   return mounted;
+}
+
+/**
+ * Keyboard navigation for the wallet list.
+ *
+ * A monitoring dashboard is something you scan repeatedly, and reaching for
+ * the mouse to change wallet breaks that. Bindings are ignored while a field
+ * has focus so typing an address never moves the selection.
+ */
+export function useListKeyboardNav({
+  count,
+  index,
+  onSelect,
+  onAdd,
+}: {
+  count: number;
+  index: number;
+  onSelect: (next: number) => void;
+  onAdd?: () => void;
+}) {
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const typing =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+      if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+
+      switch (e.key) {
+        case "ArrowDown":
+        case "j":
+          if (count === 0) return;
+          e.preventDefault();
+          onSelect((index + 1) % count);
+          break;
+        case "ArrowUp":
+        case "k":
+          if (count === 0) return;
+          e.preventDefault();
+          onSelect((index - 1 + count) % count);
+          break;
+        case "/":
+          if (!onAdd) return;
+          e.preventDefault();
+          onAdd();
+          break;
+      }
+    }
+
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [count, index, onSelect, onAdd]);
 }

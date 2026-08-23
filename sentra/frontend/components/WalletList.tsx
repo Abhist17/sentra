@@ -5,6 +5,7 @@ import type { WalletRow } from "@/lib/types";
 import { addWallet, removeWallet, ApiError } from "@/lib/api";
 import { usd, pct, shortAddress, riskBand } from "@/lib/format";
 import { Button, Input, Notice, Tag } from "./ui";
+import { Sparkline } from "./Sparkline";
 
 export function WalletList({
   wallets,
@@ -110,12 +111,17 @@ export function WalletList({
                   )}
                 </span>
 
-                <span className="mt-0.5 flex items-baseline gap-2 pl-3.5">
+                <span className="mt-0.5 flex items-center gap-2 pl-3.5">
                   <span className="numeric truncate text-[11px] text-tertiary">
                     {shortAddress(wallet.address, 5)}
                   </span>
-                  <span className="numeric ml-auto shrink-0 text-[11px] text-tertiary">
-                    {wallet.metrics ? usd(wallet.metrics.portfolio) : "pending"}
+                  <span className="ml-auto flex shrink-0 items-center gap-2">
+                    {band && wallet.history.length > 1 && (
+                      <Sparkline points={wallet.history} color={band.color} />
+                    )}
+                    <span className="numeric text-[11px] text-tertiary">
+                      {wallet.metrics ? usd(wallet.metrics.portfolio) : "pending"}
+                    </span>
                   </span>
                 </span>
               </button>
@@ -212,9 +218,15 @@ export function WalletList({
             variant="ghost"
             size="sm"
             onClick={() => setAdding(true)}
-            className="w-full justify-start"
+            data-add-wallet
+            className="w-full justify-between"
           >
-            <span aria-hidden="true">+</span> Monitor a wallet
+            <span className="flex items-center gap-1.5">
+              <span aria-hidden="true">+</span> Monitor a wallet
+            </span>
+            <kbd className="numeric rounded border border-border px-1 text-[9px] text-tertiary">
+              /
+            </kbd>
           </Button>
         )}
 

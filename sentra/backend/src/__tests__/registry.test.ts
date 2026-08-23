@@ -101,6 +101,8 @@ function metrics(address: string, risk: number, portfolio: number): WalletMetric
       lambdaApplied: 0.9975,
       parametric: { varUsd: 0, esUsd: 0 },
       historical: { varUsd: 0, esUsd: 0 },
+      contributions: [],
+      diversificationRatio: 1,
     },
     maxWeight: 1,
     coverage: 1,
