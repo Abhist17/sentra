@@ -1,6 +1,7 @@
 import {
   fetchLivePrices,
   fetchAllHistories,
+  inferIntervalMs,
   ASSET_SYMBOLS,
   STABLE_ASSETS,
   type AssetSymbol,
@@ -218,16 +219,23 @@ function buildWalletRiskAlertMessage(
   hybridRisk: number,
   portfolioValue: number,
   varUsd: number,
+  esUsd: number,
+  horizonDays: number,
+  confidence: number,
   solPrice: number,
   solBalance: number,
   stress: MarketStressResult
 ): string {
+  const horizon = horizonDays === 1 ? "1-day" : `${horizonDays}-day`;
+  const pct = (confidence * 100).toFixed(0);
+
   let message =
     `⚠️ HIGH RISK ALERT\n\n` +
     `👛 Wallet: ${label}\n` +
     `📊 Risk Score: ${hybridRisk.toFixed(2)}%\n` +
     `💰 Portfolio: $${portfolioValue.toFixed(2)}\n` +
-    `📉 1-day VaR (95%): $${varUsd.toFixed(2)}\n` +
+    `📉 ${horizon} VaR (${pct}%): $${varUsd.toFixed(2)}\n` +
+    `🔻 Expected Shortfall: $${esUsd.toFixed(2)}\n` +
     `🪙 SOL: ${solBalance.toFixed(4)} @ $${solPrice.toFixed(2)}\n`;
 
   if (stress.score > 0) {
@@ -247,6 +255,13 @@ function buildWalletRiskAlertMessage(
 
 /** Historical returns keyed by SYMBOL, never by position. */
 let returnsBySymbol: Record<string, number[]> = {};
+/**
+ * Observations per day in the historical series, measured from the data's own
+ * timestamps. The feed changes granularity with the requested window, so this
+ * is the difference between reporting a genuine one-day VaR and reporting a
+ * one-hour figure labelled as daily.
+ */
+let periodsPerDay = 0;
 let lastHistoryFetch = 0;
 const prevPrices: Partial<PriceMap> = {};
 const lastAlertTime = new Map<string, number>();
@@ -273,16 +288,29 @@ async function refreshHistoryIfStale() {
   const { returnsSource, failed } = await fetchAllHistories();
 
   const next: Record<string, number[]> = {};
-  for (const [symbol, prices] of Object.entries(returnsSource)) {
-    const returns = computeReturns(prices);
+  const intervals: number[] = [];
+
+  for (const [symbol, points] of Object.entries(returnsSource)) {
+    const returns = computeReturns(points.map((p) => p.price));
     if (returns.length >= 2) next[symbol] = returns;
+
+    const interval = inferIntervalMs(points);
+    if (interval) intervals.push(interval);
   }
 
   if (Object.keys(next).length > 0) {
     returnsBySymbol = next;
+
+    // Take the coarsest interval across assets — the joint series can only be
+    // as granular as its least granular member.
+    const intervalMs = intervals.length ? Math.max(...intervals) : 0;
+    periodsPerDay = intervalMs > 0 ? 86_400_000 / intervalMs : 0;
+
     lastHistoryFetch = Date.now();
     console.log(
-      `✅ History refreshed (${Object.keys(next).join(", ")})` +
+      `✅ History refreshed (${Object.keys(next).join(", ")}) — ` +
+        `${(intervalMs / 3_600_000).toFixed(2)}h sampling, ` +
+        `${periodsPerDay.toFixed(1)} obs/day` +
         (failed.length ? ` — unavailable: ${failed.join(", ")}` : "")
     );
   } else {
@@ -474,12 +502,17 @@ async function runTick() {
         holdings.filter((h) => h.weight > 0).map((h) => [h.symbol, h.weight])
       );
 
-      const { riskScore: varRisk, VaR: varUsd, coverage, uncovered } =
-        calculatePortfolioRisk(
-          portfolioValue,
-          weightsBySymbol,
-          returnsBySymbol
-        );
+      const risk = calculatePortfolioRisk({
+        portfolioValue,
+        weightsBySymbol,
+        returnsBySymbol,
+        periodsPerDay,
+        horizonDays: CONFIG.VAR_HORIZON_DAYS,
+        confidence: CONFIG.VAR_CONFIDENCE,
+        lambda: CONFIG.VAR_LAMBDA,
+      });
+
+      const { riskScore: varRisk, coverage, uncovered } = risk;
 
       if (uncovered.length) {
         console.log(
@@ -539,7 +572,19 @@ async function runTick() {
           stress: stressContribution,
           trend: trendPenalty,
         },
-        varUsd,
+        varUsd: risk.headlineVarUsd,
+        esUsd: risk.headlineEsUsd,
+        model: {
+          headline: risk.headlineModel,
+          horizonDays: risk.horizonDays,
+          confidence: risk.confidence,
+          periodsPerDay,
+          observations: risk.observations,
+          independentObservations: risk.independentObservations,
+          lambdaApplied: risk.lambdaApplied,
+          parametric: { varUsd: risk.varUsd, esUsd: risk.esUsd },
+          historical: { varUsd: risk.histVarUsd, esUsd: risk.histEsUsd },
+        },
         maxWeight,
         coverage,
         holdings,
@@ -550,8 +595,9 @@ async function runTick() {
         `[${label}] ` +
           `Portfolio: $${portfolioValue.toFixed(2)} | ` +
           `Risk: ${hybridRisk.toFixed(2)}% ` +
-          `(VaR: ${varRisk.toFixed(1)} + Conc: ${concentrationRisk} + ` +
-          `Trend: ${trendPenalty} + Stress: ${stressContribution.toFixed(1)})`
+          `(VaR: ${varRisk.toFixed(1)} [${risk.headlineModel}] + ` +
+          `Conc: ${concentrationRisk} + Trend: ${trendPenalty} + ` +
+          `Stress: ${stressContribution.toFixed(1)})`
       );
 
       /* 7. TELEGRAM ALERT */
@@ -568,7 +614,10 @@ async function runTick() {
               label,
               hybridRisk,
               portfolioValue,
-              varUsd,
+              risk.headlineVarUsd,
+              risk.headlineEsUsd,
+              risk.horizonDays,
+              risk.confidence,
               prices.SOL,
               holdings.find((h) => h.symbol === "SOL")?.amount ?? 0,
               marketStress

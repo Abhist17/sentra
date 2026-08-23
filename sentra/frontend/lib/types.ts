@@ -10,6 +10,20 @@ export interface Holding {
   weight: number;
 }
 
+export interface RiskModelMeta {
+  headline: "parametric" | "historical";
+  horizonDays: number;
+  confidence: number;
+  /** Observations per day in the source series (measured, not assumed). */
+  periodsPerDay: number;
+  observations: number;
+  /** Non-overlapping equivalents — what the historical tail can support. */
+  independentObservations: number;
+  lambdaApplied: number;
+  parametric: { varUsd: number; esUsd: number };
+  historical: { varUsd: number; esUsd: number };
+}
+
 export interface WalletMetrics {
   address: string;
   label: string;
@@ -22,6 +36,9 @@ export interface WalletMetrics {
     trend: number;
   };
   varUsd: number;
+  /** Expected Shortfall: average loss GIVEN a breach of VaR. */
+  esUsd: number;
+  model: RiskModelMeta;
   maxWeight: number;
   coverage: number;
   holdings: Holding[];
@@ -49,6 +66,7 @@ export interface Overview {
     risk: number;
     portfolio: number;
     varUsd: number;
+    esUsd: number;
     wallets: number;
     updatedAt: number;
   };
@@ -67,6 +85,10 @@ export interface Overview {
   config: {
     monitorInterval: number;
     riskAlertThreshold: number;
+    varHorizonDays: number;
+    varConfidence: number;
+    varLambda: number;
+    historyDays: number;
     onchainWrites: boolean;
     telegram: boolean;
     trackedAssets: string[];

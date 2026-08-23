@@ -35,9 +35,11 @@ Every 30 seconds, for every wallet you monitor:
 
 1. **Prices the book.** Reads real SOL and SPL token balances from Solana
    mainnet, values them against live CoinGecko quotes.
-2. **Computes Value at Risk.** Builds a covariance matrix from 30 days of price
-   history and derives the 95% one-day VaR — the loss you would exceed on
-   roughly one day in twenty.
+2. **Computes Value at Risk and Expected Shortfall.** Builds an
+   exponentially-weighted covariance matrix from 30 days of price history and
+   derives both the 95% one-day VaR — the loss exceeded on about one day in
+   twenty — and the Expected Shortfall, the average loss *given* that it is
+   exceeded.
 3. **Scores market stress.** Watches for volatility spikes, rapid drops, and
    assets falling together, and combines them into a systemic stress score.
 4. **Blends them into one score.** VaR plus penalties for concentration, a
@@ -80,11 +82,40 @@ under current conditions.
 The dashboard shows this breakdown for every wallet, so the number is never a
 black box — you can always see which component moved it.
 
-> **A note on honesty:** VaR is a historical model. It assumes tomorrow rhymes
-> with the last 30 days, and it says nothing about the tail beyond the 95th
-> percentile. When an asset has no return history behind it, Sentra reports the
-> reduced coverage rather than quietly scoring it as riskless. These are
-> estimates, not investment advice.
+### How the loss estimate is built
+
+Two models run on every tick, and the dashboard shows both:
+
+| Model | How | Strength |
+|:--|:--|:--|
+| **Parametric** | EWMA covariance, normal tail | Reacts to the current volatility regime |
+| **Historical** | Empirical quantile of compounded horizon returns | Carries the realised tail, no distribution assumed |
+
+The headline figure is the **more conservative of the two** — reporting the
+smaller of two defensible numbers would be choosing the flattering one.
+
+Three details that matter more than they sound:
+
+- **The horizon is measured, not assumed.** The price feed returns hourly
+  observations for a 30-day window, so volatility computed from them is
+  *hourly*. Sentra measures the sampling interval from the data's own
+  timestamps and scales to a true one-day figure. Skipping this understates a
+  one-day VaR by √24 ≈ 4.9×.
+- **The EWMA decay is frequency-aware.** λ = 0.94 is RiskMetrics' default for
+  *daily* data (~17 days of memory). Applied unchanged to hourly observations
+  it means 17 *hours*, and the estimator measures intraday noise instead of
+  volatility — on real SOL data that doubled the reported VaR. Sentra rescales
+  λ so the memory stays fixed in calendar terms.
+- **Sample size is reported.** Overlapping windows inflate the apparent
+  observation count without adding information, so the dashboard shows the
+  number of *independent* observations and says plainly when the tail rests on
+  too few.
+
+> **A note on honesty:** these are model estimates. VaR assumes tomorrow rhymes
+> with the recent past, and even Expected Shortfall says nothing about what
+> happens beyond the sample. When an asset has no return history behind it,
+> Sentra reports the reduced coverage rather than quietly scoring it as
+> riskless. Not investment advice.
 
 ---
 
@@ -301,6 +332,9 @@ Everything is environment-driven — see
 | `MONITOR_INTERVAL` | `30000` | Tick interval in ms; floor of 10s |
 | `RISK_ALERT_THRESHOLD` | `25` | Score that triggers a Telegram alert |
 | `HISTORY_DAYS` | `30` | Days behind the covariance matrix |
+| `VAR_HORIZON_DAYS` | `1` | Reporting horizon for VaR and ES |
+| `VAR_CONFIDENCE` | `0.95` | One day in twenty |
+| `VAR_LAMBDA` | `0.94` | Daily-equivalent EWMA decay, rescaled to the sampling rate |
 | `MAX_WALLETS` | `25` | Each wallet costs an RPC call per tick |
 | `DATA_DIR` | `./.data` | Wallet registry + price cache |
 | `SIMULATION_MODE` | `false` | Synthetic portfolio for empty wallets — demos only |

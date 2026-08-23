@@ -179,9 +179,11 @@ export default function Dashboard() {
                   } monitored`,
                 },
                 {
-                  label: "Value at Risk",
+                  label: `Value at Risk · ${config.varHorizonDays}d`,
                   value: usd(totals.varUsd),
-                  detail: "1-day loss at 95% confidence",
+                  detail: `Expected shortfall ${usd(totals.esUsd)} · ${(
+                    config.varConfidence * 100
+                  ).toFixed(0)}% confidence`,
                 },
                 {
                   label: "Market stress",

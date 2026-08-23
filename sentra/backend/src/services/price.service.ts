@@ -25,6 +25,13 @@ const COINGECKO_HISTORY = "https://api.coingecko.com/api/v3/coins";
 type SimplePriceResponse = Record<string, { usd: number }>;
 type MarketChartResponse = { prices: [number, number][] };
 
+/** A price observation with its timestamp, so the sampling interval can be
+ *  measured rather than assumed. */
+export interface PricePoint {
+  t: number;
+  price: number;
+}
+
 // The free CoinGecko tier rate-limits aggressively at our polling rate.
 // A demo key raises the ceiling and is passed as a header.
 const authHeaders: Record<string, string> = CONFIG.COINGECKO_API_KEY
@@ -143,7 +150,7 @@ export function getCachedPrices(): PriceSnapshot | null {
 // restart does not have to re-earn a rate limit before it can score anything.
 
 interface HistoryCacheEntry {
-  prices: number[];
+  points: PricePoint[];
   fetchedAt: number;
 }
 
@@ -156,7 +163,9 @@ function loadHistoryCacheFromDisk() {
     const raw = JSON.parse(fs.readFileSync(HISTORY_CACHE_FILE, "utf-8"));
     for (const [coinId, entry] of Object.entries(raw)) {
       const e = entry as HistoryCacheEntry;
-      if (Array.isArray(e?.prices) && e.prices.length > 2) {
+      // Entries written before timestamps were recorded are discarded rather
+      // than guessed at — the sampling interval is not recoverable from them.
+      if (Array.isArray(e?.points) && e.points.length > 2) {
         historyCache.set(coinId, e);
       }
     }
@@ -188,22 +197,54 @@ function saveHistoryCacheToDisk() {
 
 loadHistoryCacheFromDisk();
 
-export async function fetchHistory(coinId: string): Promise<number[]> {
+export async function fetchHistory(coinId: string): Promise<PricePoint[]> {
   const data = await requestWithRetry<MarketChartResponse>(
     `${COINGECKO_HISTORY}/${coinId}/market_chart`,
     { vs_currency: "usd", days: CONFIG.HISTORY_DAYS }
   );
 
-  const prices = (data?.prices ?? [])
-    .map((p) => p[1])
-    .filter((p) => Number.isFinite(p) && p > 0);
+  const points = (data?.prices ?? [])
+    .filter(
+      ([t, price]) =>
+        Number.isFinite(t) && Number.isFinite(price) && price > 0
+    )
+    .map(([t, price]) => ({ t, price }));
 
-  if (prices.length > 2) {
-    historyCache.set(coinId, { prices, fetchedAt: Date.now() });
+  if (points.length > 2) {
+    historyCache.set(coinId, { points, fetchedAt: Date.now() });
     saveHistoryCacheToDisk();
   }
 
-  return prices;
+  return points;
+}
+
+/**
+ * Median spacing between observations, in milliseconds.
+ *
+ * CoinGecko changes granularity with the requested window — hourly for a
+ * 30-day range, daily beyond 90 — so the horizon a volatility figure refers to
+ * silently depends on config. Measuring it here is what lets the risk model
+ * scale returns to an actual one-day horizon instead of quietly reporting a
+ * one-hour number as if it were daily.
+ */
+export function inferIntervalMs(points: PricePoint[]): number | null {
+  if (points.length < 3) return null;
+
+  const gaps: number[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const gap = points[i].t - points[i - 1].t;
+    if (gap > 0) gaps.push(gap);
+  }
+
+  if (gaps.length === 0) return null;
+
+  // Median, not mean: feeds occasionally drop a sample, and one long gap
+  // would drag an average badly.
+  gaps.sort((a, b) => a - b);
+  const mid = Math.floor(gaps.length / 2);
+  return gaps.length % 2 === 0
+    ? (gaps[mid - 1] + gaps[mid]) / 2
+    : gaps[mid];
 }
 
 /**
@@ -217,8 +258,8 @@ export async function fetchHistory(coinId: string): Promise<number[]> {
  */
 export async function fetchAllHistories(
   spacingMs = 2500
-): Promise<{ returnsSource: Record<string, number[]>; failed: string[] }> {
-  const returnsSource: Record<string, number[]> = {};
+): Promise<{ returnsSource: Record<string, PricePoint[]>; failed: string[] }> {
+  const returnsSource: Record<string, PricePoint[]> = {};
   const failed: string[] = [];
 
   for (let i = 0; i < ASSET_SYMBOLS.length; i++) {
@@ -230,16 +271,16 @@ export async function fetchAllHistories(
     if (i > 0) await sleep(spacingMs);
 
     try {
-      const prices = await fetchHistory(coinId);
-      if (prices.length > 2) {
-        returnsSource[symbol] = prices;
+      const points = await fetchHistory(coinId);
+      if (points.length > 2) {
+        returnsSource[symbol] = points;
         continue;
       }
       throw new Error("history too short");
     } catch (err) {
       const cached = historyCache.get(coinId);
       if (cached) {
-        returnsSource[symbol] = cached.prices;
+        returnsSource[symbol] = cached.points;
         console.warn(
           `⚠️  History failed for ${symbol} — using cache from ` +
             `${new Date(cached.fetchedAt).toISOString()}`

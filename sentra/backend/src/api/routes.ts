@@ -176,6 +176,10 @@ export function registerRoutes(app: Express) {
       config: {
         monitorInterval: CONFIG.MONITOR_INTERVAL,
         riskAlertThreshold: CONFIG.RISK_ALERT_THRESHOLD,
+        varHorizonDays: CONFIG.VAR_HORIZON_DAYS,
+        varConfidence: CONFIG.VAR_CONFIDENCE,
+        varLambda: CONFIG.VAR_LAMBDA,
+        historyDays: CONFIG.HISTORY_DAYS,
         onchainWrites: CONFIG.ENABLE_ONCHAIN_WRITES,
         telegram: telegramConfigured(),
         trackedAssets: ASSET_SYMBOLS,
@@ -194,8 +198,8 @@ export function registerRoutes(app: Express) {
   });
 
   app.get("/portfolio", (_req, res) => {
-    const { portfolio, varUsd, wallets, updatedAt } = getLatestMetrics();
-    res.json({ portfolio, varUsd, wallets, updatedAt });
+    const { portfolio, varUsd, esUsd, wallets, updatedAt } = getLatestMetrics();
+    res.json({ portfolio, varUsd, esUsd, wallets, updatedAt });
   });
 
   app.get("/market", (_req, res) => {
@@ -401,7 +405,12 @@ export function registerRoutes(app: Express) {
           `💰 Portfolio: $${target.portfolio.toLocaleString("en-US", {
             maximumFractionDigits: 2,
           })}\n` +
-          `📉 1-day VaR (95%): $${target.varUsd.toLocaleString("en-US", {
+          `📉 ${target.model.horizonDays}-day VaR ` +
+          `(${(target.model.confidence * 100).toFixed(0)}%): ` +
+          `$${target.varUsd.toLocaleString("en-US", {
+            maximumFractionDigits: 2,
+          })}\n` +
+          `🔻 Expected Shortfall: $${target.esUsd.toLocaleString("en-US", {
             maximumFractionDigits: 2,
           })}`
         : "No wallet metrics yet — the engine has not completed a tick.";

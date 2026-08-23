@@ -76,8 +76,19 @@ export const CONFIG = {
     5 * 60 * 1000,
     24 * 60 * 60 * 1000
   ),
-  // Days of price history behind the covariance matrix
+  // Days of price history behind the covariance matrix.
+  // NOTE: the feed changes granularity with this window (hourly up to ~90
+  // days, daily beyond), which is why the engine measures the sampling
+  // interval from the data rather than assuming one.
   HISTORY_DAYS: clampedNum("HISTORY_DAYS", 30, 2, 365),
+
+  // Reporting horizon for VaR and Expected Shortfall, in days.
+  VAR_HORIZON_DAYS: clampedNum("VAR_HORIZON_DAYS", 1, 1, 30),
+  // Confidence level. 0.95 = the loss exceeded on about one day in twenty.
+  VAR_CONFIDENCE: clampedNum("VAR_CONFIDENCE", 0.95, 0.5, 0.9999),
+  // EWMA decay for the covariance estimate. 0.94 is the RiskMetrics default;
+  // lower reacts faster and is noisier.
+  VAR_LAMBDA: clampedNum("VAR_LAMBDA", 0.94, 0.5, 0.999),
   SHOCK_THRESHOLD: num("SHOCK_THRESHOLD", 5),
   RISK_ALERT_THRESHOLD: num("RISK_ALERT_THRESHOLD", 25),
   ALERT_COOLDOWN: num("ALERT_COOLDOWN", 5 * 60 * 1000),

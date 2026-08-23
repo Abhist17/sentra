@@ -10,6 +10,24 @@ export interface AssetHolding {
   weight: number;
 }
 
+export interface RiskModelMeta {
+  /** Which model produced the headline figure. */
+  headline: "parametric" | "historical";
+  horizonDays: number;
+  confidence: number;
+  /** Observations per day in the source series (measured, not assumed). */
+  periodsPerDay: number;
+  /** Overlapping horizon-return samples behind the historical figures. */
+  observations: number;
+  /** Non-overlapping equivalents — what the historical tail can actually
+   *  support. Overlapping windows inflate the count without adding info. */
+  independentObservations: number;
+  /** EWMA decay after rescaling to the sampling frequency. */
+  lambdaApplied: number;
+  parametric: { varUsd: number; esUsd: number };
+  historical: { varUsd: number; esUsd: number };
+}
+
 export interface WalletMetrics {
   address: string;
   label: string;
@@ -27,8 +45,12 @@ export interface WalletMetrics {
     /** Penalty for a negative short-term trend */
     trend: number;
   };
-  /** Absolute 1-day VaR in USD */
+  /** Headline VaR in USD at the configured horizon and confidence. */
   varUsd: number;
+  /** Expected Shortfall: the average loss GIVEN a breach of VaR. */
+  esUsd: number;
+  /** How the figures above were produced, so the UI can show its working. */
+  model: RiskModelMeta;
   /** Largest single-asset weight, 0–1 */
   maxWeight: number;
   /** Share of portfolio value with return data behind it, 0–1 */
@@ -126,11 +148,15 @@ export function getLatestMetrics() {
       wallets: 0,
       updatedAt: 0,
       varUsd: 0,
+      esUsd: 0,
     };
   }
 
   const portfolio = all.reduce((sum, m) => sum + m.portfolio, 0);
+  // Summing per-wallet VaR assumes the wallets move together. That is the
+  // conservative reading, and correct when they hold the same few assets.
   const varUsd = all.reduce((sum, m) => sum + m.varUsd, 0);
+  const esUsd = all.reduce((sum, m) => sum + m.esUsd, 0);
 
   // Weight each wallet's score by its size; an empty book falls back to a
   // plain mean so the number is still meaningful.
@@ -143,6 +169,7 @@ export function getLatestMetrics() {
     risk,
     portfolio,
     varUsd,
+    esUsd,
     wallets: all.length,
     updatedAt: Math.max(...all.map((m) => m.updatedAt)),
   };

@@ -4,11 +4,19 @@ import type { WalletMetrics } from "@/lib/types";
 import { pct, usd } from "@/lib/format";
 import { Notice } from "./ui";
 
+/**
+ * Below roughly this many non-overlapping horizon observations the empirical
+ * tail rests on one or two data points and should not be read as an estimate.
+ */
+const THIN_SAMPLE = 60;
+
 const FACTORS = [
   {
     key: "var" as const,
     label: "Value at Risk",
-    note: "95% one-day loss from the 30-day covariance matrix",
+    // Filled in from the model metadata — hardcoding "95% one-day" here meant
+    // the caption stayed wrong whenever the horizon or confidence changed.
+    note: null,
   },
   {
     key: "concentration" as const,
@@ -29,6 +37,7 @@ const FACTORS = [
 
 export function ScoreBreakdown({ metrics }: { metrics: WalletMetrics }) {
   const total = FACTORS.reduce((sum, f) => sum + metrics.breakdown[f.key], 0);
+  const model = metrics.model;
 
   return (
     <div className="px-4 py-3.5">
@@ -85,7 +94,10 @@ export function ScoreBreakdown({ metrics }: { metrics: WalletMetrics }) {
                 </dd>
               </div>
               <p className="mt-0.5 pl-4 text-[11px] leading-snug text-tertiary">
-                {factor.note}
+                {factor.note ??
+                  `${(model.confidence * 100).toFixed(0)}% ${
+                    model.horizonDays
+                  }-day loss, ${model.headline} model`}
               </p>
             </div>
           );
@@ -99,13 +111,20 @@ export function ScoreBreakdown({ metrics }: { metrics: WalletMetrics }) {
             {pct(metrics.risk)}
           </span>
         </div>
-        <div className="flex items-baseline justify-between">
-          <span className="text-xs text-tertiary">Modelled 1-day loss</span>
-          <span className="numeric text-xs text-secondary">
-            {usd(metrics.varUsd)}
-          </span>
-        </div>
       </div>
+
+      <ModelDetail metrics={metrics} />
+
+      {model.independentObservations > 0 &&
+        model.independentObservations < THIN_SAMPLE && (
+          <div className="mt-3">
+            <Notice tone="info">
+              The historical tail rests on {model.independentObservations}{" "}
+              independent {model.horizonDays}-day observations — too few to be
+              read as a precise estimate.
+            </Notice>
+          </div>
+        )}
 
       {metrics.coverage < 0.999 && (
         <div className="mt-3">
@@ -115,6 +134,88 @@ export function ScoreBreakdown({ metrics }: { metrics: WalletMetrics }) {
           </Notice>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Shows the loss estimate under both models rather than a single number.
+ * They can disagree by multiples — the parametric one reacts to the current
+ * volatility regime, the historical one carries the realised tail — and
+ * hiding that disagreement would overstate how precise any of this is.
+ */
+function ModelDetail({ metrics }: { metrics: WalletMetrics }) {
+  const { model, varUsd, esUsd } = metrics;
+  const horizon = `${model.horizonDays}d`;
+  const conf = `${(model.confidence * 100).toFixed(0)}%`;
+
+  const rows = [
+    {
+      name: "Parametric",
+      note: "EWMA covariance, normal tail",
+      ...model.parametric,
+      active: model.headline === "parametric",
+    },
+    {
+      name: "Historical",
+      note: `${model.independentObservations} independent windows`,
+      ...model.historical,
+      active: model.headline === "historical",
+    },
+  ];
+
+  return (
+    <div className="mt-4 border-t border-border pt-3">
+      <div className="flex items-baseline justify-between">
+        <span className="label">Loss estimate</span>
+        <span className="numeric text-[10px] text-tertiary">
+          {horizon} · {conf}
+        </span>
+      </div>
+
+      <table className="mt-2 w-full text-[11px]">
+        <thead>
+          <tr className="text-tertiary">
+            <th className="pb-1 text-left font-medium">Model</th>
+            <th className="pb-1 text-right font-medium">VaR</th>
+            <th className="pb-1 text-right font-medium">ES</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr
+              key={row.name}
+              className={row.active ? "text-text" : "text-tertiary"}
+            >
+              <td className="py-0.5">
+                <span className="flex items-center gap-1.5">
+                  {row.active && (
+                    <span
+                      className="h-1 w-1 rounded-full bg-text"
+                      aria-label="used for the headline figure"
+                    />
+                  )}
+                  <span className={row.active ? "font-medium" : "pl-2.5"}>
+                    {row.name}
+                  </span>
+                </span>
+              </td>
+              <td className="numeric py-0.5 text-right">
+                {row.varUsd > 0 ? usd(row.varUsd) : "—"}
+              </td>
+              <td className="numeric py-0.5 text-right">
+                {row.esUsd > 0 ? usd(row.esUsd) : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <p className="mt-2 text-[10px] leading-snug text-tertiary">
+        Headline takes the more conservative of the two: {usd(varUsd)} VaR,{" "}
+        {usd(esUsd)} expected shortfall. Sampled {model.periodsPerDay.toFixed(0)}×
+        daily.
+      </p>
     </div>
   );
 }
