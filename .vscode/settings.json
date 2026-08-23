@@ -1,0 +1,52 @@
+{
+  // ── Workspace settings ──────────────────────────────────────────
+  // This file must live at the workspace ROOT (the folder you open in the
+  // editor). An earlier copy sat in sentra/.vscode/ and was never loaded,
+  // which let a global "rust-analyzer.cargo.features": "all" win and put red
+  // squiggles across programs/sentra/src/lib.rs.
+  //
+  // The underlying problem is fixed in Cargo.toml — `anchor-debug` now pulls
+  // in the crate its codegen references, so `--all-features` compiles either
+  // way. These settings just keep rust-analyzer fast and quiet.
+
+  "rust-analyzer.linkedProjects": ["./sentra/Cargo.toml"],
+  "rust-analyzer.cargo.features": [],
+  "rust-analyzer.cargo.buildScripts.enable": true,
+  "rust-analyzer.check.command": "check",
+
+  // rust-analyzer cannot fully expand the IDL-generation code inside
+  // #[program] / #[account] / #[event] and reports the unexpanded output as
+  //   "expected String, found ()"
+  //   "expected Vec<IdlInstructionAccountItem>, found ()"
+  // on the macro attribute lines. These are expansion artifacts, not real
+  // errors — `cargo check` and `anchor build` both pass.
+  "rust-analyzer.procMacro.ignored": {
+    "anchor-lang": ["account", "constant", "error_code", "event", "program"],
+    "anchor-attribute-account": ["account", "declare_id", "zero_copy"],
+    "anchor-attribute-error": ["error_code"],
+    "anchor-attribute-event": ["event", "emit"],
+    "anchor-attribute-program": ["program"],
+    "anchor-derive-accounts": ["Accounts"],
+    "anchor-derive-serde": ["AnchorSerialize", "AnchorDeserialize"],
+    "anchor-derive-space": ["InitSpace"]
+  },
+
+  // ── TypeScript ──────────────────────────────────────────────────
+  "typescript.tsdk": "sentra/frontend/node_modules/typescript/lib",
+  "editor.formatOnSave": false,
+
+  "files.exclude": {
+    "**/target": true,
+    "**/.anchor": true,
+    "**/test-ledger": true,
+    "**/.next": true,
+    "**/.data": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/target": true,
+    "**/package-lock.json": true,
+    "**/yarn.lock": true,
+    "**/Cargo.lock": true
+  }
+}
