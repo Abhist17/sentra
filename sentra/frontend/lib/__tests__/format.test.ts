@@ -39,6 +39,18 @@ describe("usd", () => {
     expect(usd(500, { compact: true })).toBe("$500");
     expect(usd(2_000_000, { compact: false })).toBe("$2,000,000");
   });
+
+  test("output does not depend on the runtime's ICU version", () => {
+    // Currency formatting defaults minimumFractionDigits to 2, and ICU builds
+    // disagree about whether that applies under compact notation. Left
+    // implicit, the same figure rendered "$12.4M" in one browser and
+    // "$12.40M" in another — so no compact figure may carry a trailing zero.
+    for (const value of [12_400_000, 1_050_000_000, 500_000, 2_500]) {
+      expect(usd(value, { compact: true })).not.toMatch(/\.\d*0(?=[A-Z]|$)/);
+    }
+    expect(usd(12_400_000)).toBe("$12.4M");
+    expect(usd(500, { compact: true })).toBe("$500");
+  });
 });
 
 describe("price", () => {

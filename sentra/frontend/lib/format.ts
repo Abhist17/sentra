@@ -4,10 +4,15 @@ export function usd(value: number, opts?: { compact?: boolean }): string {
 
   const compact = opts?.compact ?? Math.abs(value) >= 1_000_000;
 
+  // minimumFractionDigits is set explicitly because currency formatting
+  // defaults it to 2, and ICU versions disagree about whether that applies to
+  // compact notation. Left implicit, the same figure rendered as "$12.4M" in
+  // one browser and "$12.40M" in another.
   return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
     notation: compact ? "compact" : "standard",
+    minimumFractionDigits: compact ? 0 : value < 1000 ? 2 : 0,
     maximumFractionDigits: compact ? 2 : value < 1000 ? 2 : 0,
   }).format(value);
 }
