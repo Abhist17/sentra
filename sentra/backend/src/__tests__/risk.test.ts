@@ -426,3 +426,100 @@ test("zero and negative weights are ignored", () => {
   assert.deepEqual(r.uncovered, []);
   assert.equal(r.coverage, 1);
 });
+
+// ── Risk attribution ─────────────────────────────────────────────
+
+test("component VaRs sum to the portfolio VaR", () => {
+  // The Euler property is what makes this an attribution rather than a
+  // heuristic: the parts must add up to the whole.
+  const r = calculatePortfolioRisk({
+    portfolioValue: 1_000_000,
+    weightsBySymbol: { SOL: 0.5, BONK: 0.3, JUP: 0.2 },
+    returnsBySymbol: {
+      SOL: syntheticReturns(400, 0.01, 51),
+      BONK: syntheticReturns(400, 0.04, 53),
+      JUP: syntheticReturns(400, 0.02, 57),
+    },
+    periodsPerDay: 24,
+  });
+
+  assert.equal(r.contributions.length, 3);
+
+  const shareSum = r.contributions.reduce((s, c) => s + c.riskShare, 0);
+  assert.ok(Math.abs(shareSum - 1) < 1e-9, `risk shares sum to ${shareSum}`);
+
+  const componentSum = r.contributions.reduce(
+    (s, c) => s + c.componentVarUsd,
+    0
+  );
+  assert.ok(
+    Math.abs(componentSum - r.headlineVarUsd) < 1e-6,
+    `components ${componentSum} vs VaR ${r.headlineVarUsd}`
+  );
+});
+
+test("risk share diverges from value weight for a volatile asset", () => {
+  // A small, wild position carries more risk than its weight suggests. If
+  // these two numbers were equal the decomposition would be telling us
+  // nothing we did not already know from the balances.
+  const r = calculatePortfolioRisk({
+    portfolioValue: 1_000_000,
+    weightsBySymbol: { USDC: 0.8, BONK: 0.2 },
+    returnsBySymbol: {
+      USDC: syntheticReturns(400, 0.0002, 59),
+      BONK: syntheticReturns(400, 0.06, 61),
+    },
+    periodsPerDay: 24,
+  });
+
+  const bonk = r.contributions.find((c) => c.symbol === "BONK")!;
+  assert.ok(bonk.weight < 0.25);
+  assert.ok(
+    bonk.riskShare > 0.95,
+    `BONK is 20% of value but should dominate risk, got ${bonk.riskShare}`
+  );
+  assert.equal(r.contributions[0].symbol, "BONK", "sorted by risk share");
+});
+
+test("diversification ratio is 1 for a single asset and rises with spread", () => {
+  const single = calculatePortfolioRisk({
+    portfolioValue: 100_000,
+    weightsBySymbol: { SOL: 1 },
+    returnsBySymbol: { SOL: syntheticReturns(400, 0.01, 67) },
+    periodsPerDay: 24,
+  });
+  assert.ok(Math.abs(single.diversificationRatio - 1) < 1e-9);
+
+  // Four uncorrelated assets should diversify meaningfully.
+  const spread = calculatePortfolioRisk({
+    portfolioValue: 100_000,
+    weightsBySymbol: { A: 0.25, B: 0.25, C: 0.25, D: 0.25 },
+    returnsBySymbol: {
+      A: syntheticReturns(400, 0.02, 71),
+      B: syntheticReturns(400, 0.02, 73),
+      C: syntheticReturns(400, 0.02, 79),
+      D: syntheticReturns(400, 0.02, 83),
+    },
+    periodsPerDay: 24,
+  });
+  assert.ok(
+    spread.diversificationRatio > 1.3,
+    `expected real diversification, got ${spread.diversificationRatio}`
+  );
+});
+
+test("perfectly correlated assets show no diversification benefit", () => {
+  const series = syntheticReturns(400, 0.02, 89);
+  const r = calculatePortfolioRisk({
+    portfolioValue: 100_000,
+    weightsBySymbol: { A: 0.5, B: 0.5 },
+    // Same series twice: identical assets under two names.
+    returnsBySymbol: { A: series, B: [...series] },
+    periodsPerDay: 24,
+  });
+
+  assert.ok(
+    Math.abs(r.diversificationRatio - 1) < 1e-6,
+    `identical assets cannot diversify, got ${r.diversificationRatio}`
+  );
+});

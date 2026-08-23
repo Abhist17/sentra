@@ -1,6 +1,12 @@
 import dotenv from "dotenv";
 import path from "path";
-dotenv.config();
+
+// Tests must not inherit a developer's .env — otherwise a local Telegram
+// token or RPC URL silently changes what they assert, and the suite passes on
+// one machine and fails on another.
+if (process.env.NODE_ENV !== "test") {
+  dotenv.config();
+}
 
 function num(key: string, fallback: number): number {
   const raw = process.env[key];

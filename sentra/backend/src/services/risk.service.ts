@@ -268,6 +268,28 @@ export interface RiskInputs {
   lambda?: number;
 }
 
+/**
+ * Per-asset decomposition of portfolio risk (Euler allocation).
+ *
+ * Weight is not risk. A position can be 97% of a book's value and 99.4% of its
+ * risk, or 20% of value and 60% of risk — and only the second number tells you
+ * what to sell. Component VaRs sum exactly to portfolio VaR, so the split is a
+ * true attribution rather than a heuristic.
+ */
+export interface RiskContribution {
+  symbol: string;
+  /** Share of portfolio VALUE, 0-1. */
+  weight: number;
+  /** Share of portfolio RISK, 0-1. Sums to 1 across assets. */
+  riskShare: number;
+  /** This asset's slice of the headline VaR, in USD. */
+  componentVarUsd: number;
+  /** dVaR/dw: the VaR change from adding one unit of this asset. */
+  marginalVar: number;
+  /** Standalone volatility at the reporting horizon. */
+  volHorizon: number;
+}
+
 export interface PortfolioRisk {
   /** Per-period portfolio volatility (EWMA). */
   sigmaPeriod: number;
@@ -298,6 +320,15 @@ export interface PortfolioRisk {
 
   /** Score fed into the blended risk number, 0-100. */
   riskScore: number;
+
+  /** Per-asset risk attribution, largest contributor first. */
+  contributions: RiskContribution[];
+  /**
+   * Weighted average of standalone volatilities divided by portfolio
+   * volatility. 1.0 means the assets move as one and diversification is
+   * buying nothing; higher is better.
+   */
+  diversificationRatio: number;
 
   /** Share of portfolio value with a return series behind it, 0-1. */
   coverage: number;
@@ -332,6 +363,8 @@ const EMPTY: PortfolioRisk = {
   headlineEsUsd: 0,
   headlineModel: "parametric",
   riskScore: 0,
+  contributions: [],
+  diversificationRatio: 1,
   coverage: 0,
   uncovered: [],
   observations: 0,
@@ -446,6 +479,51 @@ export function calculatePortfolioRisk(inputs: RiskInputs): PortfolioRisk {
   const useHistorical = histVarPct > varPct;
   const headlineVarPct = useHistorical ? histVarPct : varPct;
   const headlineEsPct = useHistorical ? histEsPct : esPct;
+  const headlineVarUsd = (headlineVarPct / 100) * portfolioValue;
+
+  // ── Risk attribution (Euler decomposition) ─────────────────────
+  // Component VaR_i = w_i * (Sigma w)_i / sigma_p * VaR, and the components
+  // sum to VaR exactly. This is what turns "you hold a lot of SOL" into
+  // "SOL is 99% of what you stand to lose".
+  const contributions: RiskContribution[] = [];
+  let weightedStandaloneVol = 0;
+
+  if (sigmaPeriod > 0) {
+    const horizonScale = Math.sqrt(periodsInHorizon);
+
+    for (let i = 0; i < symbols.length; i++) {
+      // (Sigma w)_i — this asset's row of the covariance matrix times weights.
+      let covRow = 0;
+      for (let j = 0; j < symbols.length; j++) {
+        covRow += weights[j] * ewmaCovariance(matrix[i], matrix[j], lambdaApplied);
+      }
+
+      const marginal = covRow / sigmaPeriod;
+      const componentSigma = weights[i] * marginal;
+      const riskShare = componentSigma / sigmaPeriod;
+
+      const standaloneVol =
+        Math.sqrt(Math.max(0, ewmaCovariance(matrix[i], matrix[i], lambdaApplied))) *
+        horizonScale;
+      weightedStandaloneVol += weights[i] * standaloneVol;
+
+      contributions.push({
+        symbol: symbols[i],
+        weight: weights[i],
+        riskShare,
+        componentVarUsd: riskShare * headlineVarUsd,
+        marginalVar: marginal * horizonScale,
+        volHorizon: standaloneVol,
+      });
+    }
+
+    contributions.sort((a, b) => b.riskShare - a.riskShare);
+  }
+
+  const diversificationRatio =
+    sigmaHorizon > 0 && weightedStandaloneVol > 0
+      ? weightedStandaloneVol / sigmaHorizon
+      : 1;
 
   return {
     sigmaPeriod,
@@ -459,10 +537,12 @@ export function calculatePortfolioRisk(inputs: RiskInputs): PortfolioRisk {
     histEsPct,
     histEsUsd: (histEsPct / 100) * portfolioValue,
     headlineVarPct,
-    headlineVarUsd: (headlineVarPct / 100) * portfolioValue,
+    headlineVarUsd,
     headlineEsUsd: (headlineEsPct / 100) * portfolioValue,
     headlineModel: useHistorical ? "historical" : "parametric",
     riskScore: Math.min(100, headlineVarPct),
+    contributions,
+    diversificationRatio,
     coverage: coveredWeight,
     uncovered,
     observations: horizonReturns.length,

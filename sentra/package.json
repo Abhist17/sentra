@@ -10,7 +10,9 @@
     "build:frontend": "npm --prefix frontend run build",
     "test:backend": "npm --prefix backend test",
     "typecheck": "npm --prefix backend run typecheck && npm --prefix frontend run typecheck",
-    "gen:idl": "node scripts/gen-idl.js"
+    "gen:idl": "node scripts/gen-idl.js",
+    "test:frontend": "npm --prefix frontend test",
+    "test": "npm --prefix backend test && npm --prefix frontend test"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1"

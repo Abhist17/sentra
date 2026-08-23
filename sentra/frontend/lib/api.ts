@@ -10,17 +10,43 @@ const STORAGE_KEY = "sentra-api-url";
 export function normaliseUrl(raw: string): string {
   const trimmed = raw.trim().replace(/\/+$/, "");
   if (!trimmed) return "";
-  // Accept "localhost:4000" as shorthand.
-  return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+
+  // Only supply a scheme when the input has none. Blindly prepending http://
+  // turns "ftp://host" into "http://ftp://host", which parses as a valid http
+  // URL with host "ftp" — so an unsupported scheme would slip through.
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return trimmed;
+
+  // An opaque scheme such as "javascript:alert(1)" is also left alone so
+  // validation can reject it. The negative lookahead keeps "localhost:4000"
+  // and "example.com:4000" out of this branch — there the colon introduces a
+  // port, not a scheme.
+  if (/^[a-z][a-z0-9+.-]*:(?!\d)/i.test(trimmed)) return trimmed;
+
+  // Accept "localhost:4000" as shorthand for http://localhost:4000.
+  return `http://${trimmed}`;
 }
 
+/** Hostname, or a bracketed IPv6 literal. */
+const HOSTNAME =
+  /^(\[[0-9a-f:.]+\]|[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*)$/i;
+
 export function isValidUrl(raw: string): boolean {
+  const candidate = normaliseUrl(raw);
+  if (!candidate) return false;
+
+  let url: URL;
   try {
-    const url = new URL(normaliseUrl(raw));
-    return url.protocol === "http:" || url.protocol === "https:";
+    url = new URL(candidate);
   } catch {
     return false;
   }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+
+  // URL parsing is permissive enough to accept "!!!garbage!!!" as a hostname,
+  // which would then be stored as the engine address and fail every request
+  // with no explanation.
+  return HOSTNAME.test(url.hostname);
 }
 
 /**

@@ -37,18 +37,23 @@ const VOLATILITY_WINDOW_SIZE = 12;
 
 const priceWindow: Record<string, number[]> = {};
 
-function updatePriceWindow(symbol: string, price: number): void {
+export function updatePriceWindow(symbol: string, price: number): void {
   const window = (priceWindow[symbol] ??= []);
   window.push(price);
   if (window.length > VOLATILITY_WINDOW_SIZE) window.shift();
 }
 
+/** Clears the live price window. Tests need a clean slate between cases. */
+export function resetPriceWindow(): void {
+  for (const key of Object.keys(priceWindow)) delete priceWindow[key];
+}
+
 /** Returns between consecutive live ticks for one asset. */
-function liveReturns(symbol: string): number[] {
+export function liveReturns(symbol: string): number[] {
   return computeReturns(priceWindow[symbol] ?? []);
 }
 
-function computeVolatility(symbol: string): number {
+export function computeVolatility(symbol: string): number {
   const returns = liveReturns(symbol);
   if (returns.length < 2) return 0;
 
@@ -59,7 +64,7 @@ function computeVolatility(symbol: string): number {
   return Math.sqrt(variance);
 }
 
-function detectVolatilitySpike(threshold = 0.03): {
+export function detectVolatilitySpike(threshold = 0.03): {
   spiking: boolean;
   spikingAssets: string[];
   volatility: Record<string, number>;
@@ -82,13 +87,13 @@ function detectVolatilitySpike(threshold = 0.03): {
 // ─────────────────────────────────────────────
 // 2. RAPID PRICE DROP DETECTION
 // ─────────────────────────────────────────────
-interface RapidDropResult {
+export interface RapidDropResult {
   detected: boolean;
   drops: { symbol: string; changePercent: number }[];
   changes: Partial<Record<AssetSymbol, number>>;
 }
 
-function detectRapidDrops(
+export function detectRapidDrops(
   currentPrices: PriceMap,
   previousPrices: Partial<PriceMap>,
   dropThreshold = -3
@@ -117,13 +122,13 @@ function detectRapidDrops(
 // LIVE ticks. The old implementation read the cached 30-day history, which
 // only changes once an hour, so the "signal" was frozen between refreshes.
 // ─────────────────────────────────────────────
-interface CorrelationBreakdownResult {
+export interface CorrelationBreakdownResult {
   breakdown: boolean;
   fallingAssets: string[];
   fallingCount: number;
 }
 
-function detectCorrelationBreakdown(
+export function detectCorrelationBreakdown(
   lookback = 3,
   minFallingAssets = 3
 ): CorrelationBreakdownResult {
@@ -151,13 +156,13 @@ function detectCorrelationBreakdown(
 // ─────────────────────────────────────────────
 // 4. MARKET STRESS SCORE (0–100)
 // ─────────────────────────────────────────────
-interface MarketStressResult {
+export interface MarketStressResult {
   score: number;
   signals: string[];
   level: "LOW" | "MODERATE" | "HIGH" | "CRITICAL";
 }
 
-function computeMarketStressScore(
+export function computeMarketStressScore(
   volatilitySpiking: boolean,
   spikingAssets: string[],
   correlationBreakdown: boolean,
