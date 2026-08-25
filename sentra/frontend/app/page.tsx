@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useOverview, useListKeyboardNav } from "@/lib/hooks";
-import { resolveApiUrl } from "@/lib/api";
+import { resolveApiUrl, hasApiKey } from "@/lib/api";
 import { usd, pct, timeAgo, engineStatus } from "@/lib/format";
 import { TopBar } from "@/components/TopBar";
 import { StatusAnnouncer } from "@/components/StatusAnnouncer";
@@ -94,6 +94,11 @@ export default function Dashboard() {
   if (!data) return <LoadingView />;
 
   const { totals, market, config } = data;
+  // A public engine protects its write routes. Without a key this dashboard
+  // can read it but not change it, and the UI should say so rather than
+  // offering controls that will be refused.
+  const readOnly = config.requiresApiKey && !hasApiKey();
+
   const status = engineStatus({
     demo,
     lastTickError: market.lastTickError,
@@ -209,6 +214,8 @@ export default function Dashboard() {
                 selected={selected}
                 onSelect={setSelected}
                 onChanged={refresh}
+                readOnly={readOnly}
+                onConnectEngine={() => setSettingsOpen(true)}
               />
             </Panel>
 

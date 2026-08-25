@@ -12,11 +12,16 @@ export function WalletList({
   selected,
   onSelect,
   onChanged,
+  readOnly = false,
+  onConnectEngine,
 }: {
   wallets: WalletRow[];
   selected: string | null;
   onSelect: (address: string) => void;
   onChanged: () => Promise<void> | void;
+  /** Engine requires a key this dashboard does not have — writes will 401. */
+  readOnly?: boolean;
+  onConnectEngine?: () => void;
 }) {
   const [adding, setAdding] = useState(false);
   const [address, setAddress] = useState("");
@@ -126,7 +131,7 @@ export function WalletList({
                 </span>
               </button>
 
-              {!wallet.isDemo && (
+              {!wallet.isDemo && !readOnly && (
                 <div className="absolute right-1.5 top-1.5">
                   {confirming === wallet.address ? (
                     <Button
@@ -170,7 +175,26 @@ export function WalletList({
       </ul>
 
       <div className="mt-2 border-t border-border pt-2.5">
-        {adding ? (
+        {/* A public engine protects its write routes so strangers cannot spend
+            its RPC quota. Say so up front rather than letting someone type an
+            address and meet a 401. */}
+        {readOnly ? (
+          <p className="px-1.5 py-1 text-[11px] leading-relaxed text-tertiary">
+            This engine is read-only.{" "}
+            {onConnectEngine && (
+              <>
+                <button
+                  type="button"
+                  onClick={onConnectEngine}
+                  className="font-medium text-secondary underline underline-offset-2 hover:text-text"
+                >
+                  Connect your own
+                </button>{" "}
+              </>
+            )}
+            to monitor a wallet.
+          </p>
+        ) : adding ? (
           <form onSubmit={handleAdd} className="space-y-2">
             <Input
               value={address}

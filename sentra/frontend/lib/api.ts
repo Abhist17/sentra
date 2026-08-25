@@ -88,6 +88,17 @@ export function hasApiOverride(): boolean {
 const API_KEY = process.env.NEXT_PUBLIC_API_KEY || "";
 
 /**
+ * Whether this build carries a key for the engine's write routes.
+ *
+ * A public engine sets API_KEY so strangers cannot add wallets to it and
+ * spend its RPC quota. The dashboard needs to know that before offering an
+ * affordance the engine is going to refuse.
+ */
+export function hasApiKey(): boolean {
+  return Boolean(API_KEY);
+}
+
+/**
  * A request that never settles is worse than one that fails: the dashboard
  * sits on a loading skeleton with nothing to retry. Browsers do not time out
  * fetch by default, and a blocked private-network preflight hangs rather than
@@ -137,6 +148,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const body = await res.json().catch(() => null);
 
   if (!res.ok) {
+    // "Invalid or missing x-api-key" is accurate and tells a dashboard user
+    // nothing they can act on. What it means to them is that this engine
+    // does not accept changes from them.
+    if (res.status === 401) {
+      throw new ApiError(
+        "This engine is read-only — it does not accept changes from this dashboard.",
+        401
+      );
+    }
+
     const detail =
       (body as { error?: string; detail?: string })?.error ??
       (body as { detail?: string })?.detail ??
