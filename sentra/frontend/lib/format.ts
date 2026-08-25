@@ -148,6 +148,70 @@ export function stressColor(level: string): string {
   }
 }
 
+// ── Engine status ────────────────────────────────────────────────
+// One derivation shared by the status pill and the screen-reader announcer,
+// so the two can never describe the connection differently.
+
+export type EngineStatusKey = "demo" | "error" | "degraded" | "live";
+
+export interface EngineStatus {
+  key: EngineStatusKey;
+  /** Terse label for the status pill. */
+  label: string;
+  color: string;
+  /** Only the healthy state pulses — motion here means "still updating". */
+  pulse: boolean;
+  /** Full sentence, for announcements rather than the pill. */
+  description: string;
+}
+
+export function engineStatus(input: {
+  demo: boolean;
+  lastTickError: string | null;
+  pricesStale: boolean;
+}): EngineStatus {
+  // Ordered by how much it should worry the reader. A demo build has no
+  // engine at all, so its state cannot be degraded or failing.
+  if (input.demo) {
+    return {
+      key: "demo",
+      label: "Demo",
+      color: "var(--text-tertiary)",
+      pulse: false,
+      description: "No engine connected — figures are synthetic demo data.",
+    };
+  }
+
+  if (input.lastTickError) {
+    return {
+      key: "error",
+      label: "Engine error",
+      color: "var(--severe)",
+      pulse: false,
+      description: `Engine tick failed: ${input.lastTickError}`,
+    };
+  }
+
+  if (input.pricesStale) {
+    return {
+      key: "degraded",
+      label: "Feed degraded",
+      color: "var(--watch)",
+      pulse: false,
+      description:
+        "Price feed unreachable — figures are based on the last known quotes.",
+    };
+  }
+
+  return {
+    key: "live",
+    label: "Live",
+    color: "var(--calm)",
+    pulse: true,
+    description: "Engine live and scoring on schedule.",
+  };
+}
+
 // ── Allocation ───────────────────────────────────────────────────
 const ASSET_SLOTS: Record<string, string> = {
   SOL: "var(--asset-1)",

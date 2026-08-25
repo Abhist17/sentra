@@ -17,6 +17,7 @@ import {
   riskBand,
   stressColor,
   assetColor,
+  engineStatus,
   BAND_THRESHOLDS,
 } from "../format";
 
@@ -163,5 +164,64 @@ describe("colour mapping", () => {
     const known = ["SOL", "BONK", "JUP", "USDC"].map(assetColor);
     expect(new Set(known).size).toBe(4);
     expect(assetColor("WIF")).toBe("var(--asset-other)");
+  });
+});
+
+describe("engineStatus", () => {
+  const healthy = { demo: false, lastTickError: null, pricesStale: false };
+
+  test("a healthy engine is the only state that pulses", () => {
+    expect(engineStatus(healthy).key).toBe("live");
+    expect(engineStatus(healthy).pulse).toBe(true);
+
+    for (const input of [
+      { ...healthy, demo: true },
+      { ...healthy, lastTickError: "boom" },
+      { ...healthy, pricesStale: true },
+    ]) {
+      expect(engineStatus(input).pulse).toBe(false);
+    }
+  });
+
+  test("demo outranks every other state", () => {
+    // A demo build has no engine, so it cannot be degraded or failing —
+    // reporting "Engine error" over synthetic data would be a lie.
+    const status = engineStatus({
+      demo: true,
+      lastTickError: "boom",
+      pricesStale: true,
+    });
+    expect(status.key).toBe("demo");
+  });
+
+  test("a failed tick outranks a stale feed", () => {
+    const status = engineStatus({
+      demo: false,
+      lastTickError: "RPC timeout",
+      pricesStale: true,
+    });
+    expect(status.key).toBe("error");
+    expect(status.description).toContain("RPC timeout");
+  });
+
+  test("a stale feed degrades rather than fails", () => {
+    expect(engineStatus({ ...healthy, pricesStale: true }).key).toBe(
+      "degraded"
+    );
+  });
+
+  test("every state carries a pill label and a spoken description", () => {
+    for (const input of [
+      healthy,
+      { ...healthy, demo: true },
+      { ...healthy, lastTickError: "boom" },
+      { ...healthy, pricesStale: true },
+    ]) {
+      const status = engineStatus(input);
+      expect(status.label.length).toBeGreaterThan(0);
+      // The pill is terse; the announcement has to stand on its own.
+      expect(status.description.length).toBeGreaterThan(status.label.length);
+      expect(status.color).toMatch(/^var\(--/);
+    }
   });
 });

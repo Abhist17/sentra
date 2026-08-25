@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useOverview, useListKeyboardNav } from "@/lib/hooks";
 import { resolveApiUrl } from "@/lib/api";
-import { usd, pct, timeAgo } from "@/lib/format";
+import { usd, pct, timeAgo, engineStatus } from "@/lib/format";
 import { TopBar } from "@/components/TopBar";
+import { StatusAnnouncer } from "@/components/StatusAnnouncer";
 import { EngineUrlDialog } from "@/components/EngineUrlDialog";
 import { SummaryPanel } from "@/components/SummaryPanel";
 import { TrendChart } from "@/components/TrendChart";
@@ -93,9 +94,15 @@ export default function Dashboard() {
   if (!data) return <LoadingView />;
 
   const { totals, market, config } = data;
+  const status = engineStatus({
+    demo,
+    lastTickError: market.lastTickError,
+    pricesStale: market.pricesStale,
+  });
 
   return (
     <div className="min-h-screen">
+      <StatusAnnouncer risk={totals.risk} status={status} />
       <TopBar
         demo={demo}
         lastTickAt={market.lastTickAt}

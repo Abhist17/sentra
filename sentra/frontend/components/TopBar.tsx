@@ -1,6 +1,6 @@
 "use client";
 
-import { timeAgo } from "@/lib/format";
+import { engineStatus, timeAgo } from "@/lib/format";
 import { useMounted, useNow } from "@/lib/hooks";
 import { useTheme } from "@/lib/theme";
 import { Button, Dot } from "./ui";
@@ -98,13 +98,7 @@ export function TopBar({
   const mounted = useMounted();
   useNow(1000); // keeps the relative timestamp honest
 
-  const status = demo
-    ? { color: "var(--text-tertiary)", text: "Demo", pulse: false }
-    : lastTickError
-      ? { color: "var(--severe)", text: "Engine error", pulse: false }
-      : pricesStale
-        ? { color: "var(--watch)", text: "Feed degraded", pulse: false }
-        : { color: "var(--calm)", text: "Live", pulse: true };
+  const status = engineStatus({ demo, lastTickError, pricesStale });
 
   return (
     <header className="sticky top-0 z-20 border-b border-border bg-bg/85 backdrop-blur-md">
@@ -119,7 +113,7 @@ export function TopBar({
           <span className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1">
             <Dot color={status.color} pulse={status.pulse} />
             <span className="text-[11px] font-medium text-secondary">
-              {status.text}
+              {status.label}
             </span>
           </span>
 
