@@ -238,52 +238,6 @@ export default function Dashboard() {
               />
             </Panel>
 
-            <Panel delay={80}>
-              <PanelHeader
-                title="Engine"
-                meta={demo ? "not connected" : undefined}
-              />
-              <dl className="px-4 py-3">
-                <Row
-                  label="Poll interval"
-                  value={
-                    demo ? "—" : `${Math.round(config.monitorInterval / 1000)}s`
-                  }
-                />
-                <Row
-                  label="Last tick"
-                  value={demo ? "—" : timeAgo(market.lastTickAt)}
-                />
-                <Row
-                  label="Return series"
-                  value={
-                    demo
-                      ? "—"
-                      : `${market.historyAssets}/${config.trackedAssets.length}`
-                  }
-                />
-                <Row
-                  label="Alert threshold"
-                  value={pct(config.riskAlertThreshold, 0)}
-                />
-                <Row
-                  label="Telegram"
-                  value={config.telegram ? "on" : "off"}
-                  color={
-                    config.telegram ? "var(--calm)" : "var(--text-tertiary)"
-                  }
-                />
-                <Row
-                  label="On-chain writes"
-                  value={config.onchainWrites ? "on" : "off"}
-                  color={
-                    config.onchainWrites
-                      ? "var(--calm)"
-                      : "var(--text-tertiary)"
-                  }
-                />
-              </dl>
-            </Panel>
           </aside>
 
           {/* ── Main ─────────────────────────────────────── */}
@@ -370,6 +324,52 @@ export default function Dashboard() {
             </div>
           </div>
         </div>
+
+        {/* Engine diagnostics are status, not content. In the sidebar they
+            sat between the wallet list and the risk chart on a phone, so a
+            reader scrolled past poll intervals and on-chain write flags to
+            reach the thing they came for. A full-width strip at the end
+            reads better on a desktop too. */}
+        <Panel className="mt-4" delay={80}>
+          <PanelHeader
+            title="Engine"
+            meta={demo ? "not connected" : undefined}
+          />
+          <dl className="grid grid-cols-2 gap-x-6 px-4 py-3 sm:grid-cols-3 lg:grid-cols-6">
+            <Row
+              label="Poll interval"
+              value={demo ? "—" : `${Math.round(config.monitorInterval / 1000)}s`}
+            />
+            <Row
+              label="Last tick"
+              value={demo ? "—" : timeAgo(market.lastTickAt)}
+            />
+            <Row
+              label="Return series"
+              value={
+                demo
+                  ? "—"
+                  : `${market.historyAssets}/${config.trackedAssets.length}`
+              }
+            />
+            <Row
+              label="Alert threshold"
+              value={pct(config.riskAlertThreshold, 0)}
+            />
+            <Row
+              label="Telegram"
+              value={config.telegram ? "on" : "off"}
+              color={config.telegram ? "var(--calm)" : "var(--text-tertiary)"}
+            />
+            <Row
+              label="On-chain writes"
+              value={config.onchainWrites ? "on" : "off"}
+              color={
+                config.onchainWrites ? "var(--calm)" : "var(--text-tertiary)"
+              }
+            />
+          </dl>
+        </Panel>
 
         <footer className="mt-8 border-t border-border pt-4">
           <p className="text-[11px] leading-relaxed text-tertiary">
