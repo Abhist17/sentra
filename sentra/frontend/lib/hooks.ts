@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { RefObject } from "react";
 import { getOverview, ApiError, hasApiOverride } from "./api";
 import { buildDemoOverview } from "./demo";
 import type { Overview } from "./types";
@@ -166,6 +167,79 @@ export function useMounted(): boolean {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   return mounted;
+}
+
+/**
+ * Makes a dialog behave like one.
+ *
+ * `aria-modal="true"` is a promise to assistive tech, not an implementation:
+ * on its own, Tab still walks straight out of the dialog and into the page
+ * behind it, and closing drops focus back to the top of the document instead
+ * of the control that opened it. This keeps that promise — Tab cycles within
+ * `container`, the page behind cannot scroll, and focus returns where it came
+ * from on close.
+ */
+export function useModalFocus(
+  active: boolean,
+  container: RefObject<HTMLElement | null>
+) {
+  useEffect(() => {
+    if (!active) return;
+
+    const opener = document.activeElement as HTMLElement | null;
+
+    const FOCUSABLE = [
+      "a[href]",
+      "button:not([disabled])",
+      "input:not([disabled])",
+      "select:not([disabled])",
+      "textarea:not([disabled])",
+      '[tabindex]:not([tabindex="-1"])',
+    ].join(",");
+
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Tab") return;
+
+      const root = container.current;
+      if (!root) return;
+
+      // getClientRects() rather than offsetParent: the dialog sits inside a
+      // position:fixed backdrop, where offsetParent is an unreliable proxy
+      // for "is this on screen".
+      const focusable = Array.from(
+        root.querySelectorAll<HTMLElement>(FOCUSABLE)
+      ).filter((el) => el.getClientRects().length > 0);
+
+      if (focusable.length === 0) {
+        e.preventDefault();
+        return;
+      }
+
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const current = document.activeElement;
+      const outside = !root.contains(current);
+
+      if (e.shiftKey && (current === first || outside)) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (current === last || outside)) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+
+    document.addEventListener("keydown", onKeyDown, true);
+
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+      document.body.style.overflow = previousOverflow;
+      opener?.focus?.();
+    };
+  }, [active, container]);
 }
 
 /**

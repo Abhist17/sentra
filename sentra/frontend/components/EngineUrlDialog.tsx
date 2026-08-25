@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   DEFAULT_API_URL,
   resolveApiUrl,
@@ -9,6 +9,7 @@ import {
   isValidUrl,
   normaliseUrl,
 } from "@/lib/api";
+import { useModalFocus } from "@/lib/hooks";
 import { Button, Input, Notice } from "./ui";
 
 /**
@@ -27,6 +28,9 @@ export function EngineUrlDialog({
 }) {
   const [value, setValue] = useState("");
   const [touched, setTouched] = useState(false);
+  const card = useRef<HTMLDivElement>(null);
+
+  useModalFocus(open, card);
 
   useEffect(() => {
     if (open) {
@@ -61,6 +65,7 @@ export function EngineUrlDialog({
       role="presentation"
     >
       <div
+        ref={card}
         className="card w-full max-w-md p-5 shadow-lg"
         onClick={(e) => e.stopPropagation()}
         role="dialog"
