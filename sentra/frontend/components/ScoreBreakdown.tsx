@@ -10,6 +10,20 @@ import { Notice } from "./ui";
  */
 const THIN_SAMPLE = 60;
 
+/**
+ * Tone per factor, strongest first.
+ *
+ * These were one colour at four opacity steps, which over a dark surface
+ * compressed into four greys nobody could tell apart — so the composition bar
+ * had segments that could not be matched to the rows they belonged to, which
+ * is the only job a legend has. Mixing toward the hairline colour instead
+ * spreads the ramp across the full range the theme actually has, and it
+ * inverts correctly in the light theme without a second table.
+ */
+function tone(index: number): string {
+  return `color-mix(in srgb, var(--text) ${100 - index * 22}%, var(--border-strong))`;
+}
+
 const FACTORS = [
   {
     key: "var" as const,
@@ -41,18 +55,20 @@ export function ScoreBreakdown({ metrics }: { metrics: WalletMetrics }) {
 
   return (
     <div className="px-4 py-3.5">
-      {/* Contribution bar — how the final score was assembled */}
-      <div className="mb-4 flex h-1.5 overflow-hidden rounded-full bg-surface-hover">
+      {/* Contribution bar — how the final score was assembled. The 2px gaps
+          matter: without them adjacent segments of similar tone read as one
+          wider segment and the count comes out wrong. */}
+      <div className="mb-4 flex h-2 gap-[2px] overflow-hidden rounded-full bg-surface-hover">
         {FACTORS.map((factor, i) => {
           const value = metrics.breakdown[factor.key];
           if (value <= 0 || total <= 0) return null;
           return (
             <div
               key={factor.key}
+              className="first:rounded-l-full last:rounded-r-full"
               style={{
                 width: `${(value / total) * 100}%`,
-                backgroundColor: "var(--text-secondary)",
-                opacity: 1 - i * 0.2,
+                backgroundColor: tone(i),
               }}
             />
           );
@@ -78,8 +94,7 @@ export function ScoreBreakdown({ metrics }: { metrics: WalletMetrics }) {
                       style={{
                         backgroundColor: inactive
                           ? "var(--border-strong)"
-                          : "var(--text-secondary)",
-                        opacity: inactive ? 1 : 1 - i * 0.2,
+                          : tone(i),
                       }}
                     />
                     {factor.label}
@@ -90,7 +105,16 @@ export function ScoreBreakdown({ metrics }: { metrics: WalletMetrics }) {
                     inactive ? "text-tertiary" : "text-text"
                   }`}
                 >
-                  {inactive ? "—" : `+${value.toFixed(1)}`}
+                  {inactive ? (
+                    "—"
+                  ) : (
+                    <>
+                      +{value.toFixed(1)}
+                      <span className="ml-1.5 text-[11px] font-normal text-tertiary">
+                        {((value / total) * 100).toFixed(0)}%
+                      </span>
+                    </>
+                  )}
                 </dd>
               </div>
               <p className="mt-0.5 pl-4 text-[11px] leading-snug text-tertiary">
