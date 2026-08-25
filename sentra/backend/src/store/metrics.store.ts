@@ -1,3 +1,5 @@
+import fs from "fs";
+import path from "path";
 import { CONFIG } from "../config/env";
 import type { AssetSymbol, PriceMap } from "../services/price.service";
 
@@ -101,6 +103,152 @@ export const walletMetrics: Map<string, WalletMetrics> = new Map();
 
 const riskHistory: Map<string, RiskPoint[]> = new Map();
 
+// ── Persistence ──────────────────────────────────────────────────
+// The wallet registry and the price-history cache both survive a restart;
+// the risk series did not. Hosts like Render restart containers routinely, so
+// in practice a user's chart reset to "not enough history yet" on someone
+// else's schedule — and unlike prices, this series cannot be re-fetched from
+// anywhere. It only exists if we kept it.
+
+const HISTORY_FILE = path.join(CONFIG.DATA_DIR, "risk-history.json");
+
+/**
+ * Ticks arrive every 30s per wallet; writing the whole series each time is
+ * pointless churn. Batch instead, and flush on shutdown so at most one
+ * interval of history is ever at risk.
+ */
+const PERSIST_INTERVAL = 30_000;
+
+// Tests must not inherit — or scribble into — a developer's .data directory,
+// for the same reason config/env.ts refuses to load their .env.
+const persistenceEnabled = process.env.NODE_ENV !== "test";
+
+let persistTimer: NodeJS.Timeout | null = null;
+let dirty = false;
+
+/** True for a point that can be drawn without corrupting the chart's scale. */
+function isRiskPoint(value: unknown): value is RiskPoint {
+  const point = value as RiskPoint;
+  return (
+    !!point &&
+    typeof point === "object" &&
+    Number.isFinite(point.t) &&
+    point.t > 0 &&
+    Number.isFinite(point.risk) &&
+    point.risk >= 0 &&
+    point.risk <= 100 &&
+    Number.isFinite(point.portfolio) &&
+    point.portfolio >= 0
+  );
+}
+
+/**
+ * Validates a parsed history file into usable series.
+ *
+ * Exported because this is the part that can go wrong: the file is edited by
+ * nothing but this process, but a half-written file from a killed container,
+ * a hand-edit, or a downgrade can all produce shapes that would otherwise
+ * reach the chart and blow up its axis.
+ */
+export function parseRiskHistory(raw: unknown): Map<string, RiskPoint[]> {
+  const out = new Map<string, RiskPoint[]>();
+
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+
+  for (const [address, points] of Object.entries(raw)) {
+    if (typeof address !== "string" || !address || !Array.isArray(points)) {
+      continue;
+    }
+
+    const clean = points
+      .filter(isRiskPoint)
+      // A file written by a build with a larger HISTORY_POINTS must not
+      // reinstate a longer buffer than this process is willing to hold.
+      .sort((a, b) => a.t - b.t)
+      .slice(-CONFIG.HISTORY_POINTS);
+
+    if (clean.length > 0) out.set(address, clean);
+  }
+
+  return out;
+}
+
+export function serialiseRiskHistory(): Record<string, RiskPoint[]> {
+  return Object.fromEntries(riskHistory);
+}
+
+/** Writes the series to disk now. Called on shutdown and on wallet removal. */
+export function flushRiskHistory(): void {
+  if (!persistenceEnabled) return;
+
+  dirty = false;
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+
+  try {
+    fs.mkdirSync(CONFIG.DATA_DIR, { recursive: true });
+    // Write-then-rename: a container killed mid-write would otherwise leave a
+    // truncated file, and the next boot would drop the history it was meant
+    // to protect.
+    const temporary = `${HISTORY_FILE}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify(serialiseRiskHistory()));
+    fs.renameSync(temporary, HISTORY_FILE);
+  } catch (err) {
+    console.warn(
+      "⚠️  Could not persist risk history:",
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
+function schedulePersist() {
+  if (!persistenceEnabled) return;
+
+  dirty = true;
+  if (persistTimer) return;
+
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    if (dirty) flushRiskHistory();
+  }, PERSIST_INTERVAL);
+
+  // Never hold the process open for a pending write.
+  persistTimer.unref?.();
+}
+
+function restoreRiskHistory() {
+  if (!persistenceEnabled) return;
+
+  try {
+    if (!fs.existsSync(HISTORY_FILE)) return;
+
+    const restored = parseRiskHistory(
+      JSON.parse(fs.readFileSync(HISTORY_FILE, "utf-8"))
+    );
+
+    for (const [address, points] of restored) riskHistory.set(address, points);
+
+    if (restored.size > 0) {
+      const points = Array.from(restored.values()).reduce(
+        (sum, series) => sum + series.length,
+        0
+      );
+      console.log(
+        `💾 Restored ${points} risk point(s) across ${restored.size} wallet(s)`
+      );
+    }
+  } catch (err) {
+    console.warn(
+      "⚠️  Could not restore risk history:",
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
+restoreRiskHistory();
+
 const market: MarketState = {
   prices: null,
   changes: {},
@@ -130,6 +278,7 @@ export function updateMetrics(metrics: WalletMetrics) {
   }
 
   riskHistory.set(metrics.address, series);
+  schedulePersist();
 }
 
 export function getWalletMetrics(address: string): WalletMetrics | null {
@@ -143,6 +292,10 @@ export function getRiskHistory(address: string): RiskPoint[] {
 export function forgetWallet(address: string) {
   walletMetrics.delete(address);
   riskHistory.delete(address);
+  // Flush rather than schedule: removal is rare, user-initiated, and a
+  // process killed before the batched write would resurrect the series the
+  // user just asked to be rid of.
+  flushRiskHistory();
 }
 
 /**
