@@ -146,6 +146,52 @@ export default function Dashboard() {
           </div>
         )}
 
+        {/* The blended score is portfolio-wide, so it spans the full
+            width above the split rather than sitting inside the right
+            column. Stacked on a phone, the sidebar used to push the
+            headline number under roughly 650px of wallet, market and
+            engine panels before you could see it. */}
+        <div className="mb-4">
+          <SummaryPanel
+            score={totals.risk}
+            metrics={[
+              {
+                label: "Exposure",
+                value: usd(totals.portfolio),
+                detail: `${totals.wallets} wallet${
+                  totals.wallets === 1 ? "" : "s"
+                } monitored`,
+              },
+              {
+                label: `Value at Risk · ${config.varHorizonDays}d`,
+                value: usd(totals.varUsd),
+                detail: `Expected shortfall ${usd(totals.esUsd)} · ${(
+                  config.varConfidence * 100
+                ).toFixed(0)}% confidence`,
+              },
+              {
+                label: "Market stress",
+                value: `${market.stress.score}`,
+                detail: `${market.stress.signals.length} signal${
+                  market.stress.signals.length === 1 ? "" : "s"
+                } active`,
+              },
+              {
+                label: "Concentration",
+                value: active?.metrics
+                  ? pct(active.metrics.maxWeight * 100, 1)
+                  : "—",
+                // The other three figures are portfolio-wide; this one is
+                // per-wallet, so it says which wallet rather than leaving
+                // the reader to assume it aggregates like its neighbours.
+                detail: active
+                  ? `Largest single-asset weight · ${active.label}`
+                  : "Largest single-asset weight",
+              },
+            ]}
+          />
+        </div>
+
         <div className="grid gap-4 lg:grid-cols-[264px_minmax(0,1fr)]">
           {/* ── Sidebar ──────────────────────────────────── */}
           <aside className="space-y-4 lg:sticky lg:top-[72px] lg:self-start">
@@ -222,45 +268,6 @@ export default function Dashboard() {
 
           {/* ── Main ─────────────────────────────────────── */}
           <div className="min-w-0 space-y-4">
-            <SummaryPanel
-              score={totals.risk}
-              metrics={[
-                {
-                  label: "Exposure",
-                  value: usd(totals.portfolio),
-                  detail: `${totals.wallets} wallet${
-                    totals.wallets === 1 ? "" : "s"
-                  } monitored`,
-                },
-                {
-                  label: `Value at Risk · ${config.varHorizonDays}d`,
-                  value: usd(totals.varUsd),
-                  detail: `Expected shortfall ${usd(totals.esUsd)} · ${(
-                    config.varConfidence * 100
-                  ).toFixed(0)}% confidence`,
-                },
-                {
-                  label: "Market stress",
-                  value: `${market.stress.score}`,
-                  detail: `${market.stress.signals.length} signal${
-                    market.stress.signals.length === 1 ? "" : "s"
-                  } active`,
-                },
-                {
-                  label: "Concentration",
-                  value: active?.metrics
-                    ? pct(active.metrics.maxWeight * 100, 1)
-                    : "—",
-                  // The other three figures are portfolio-wide; this one is
-                  // per-wallet, so it says which wallet rather than leaving
-                  // the reader to assume it aggregates like its neighbours.
-                  detail: active
-                    ? `Largest single-asset weight · ${active.label}`
-                    : "Largest single-asset weight",
-                },
-              ]}
-            />
-
             <Panel delay={40}>
               <PanelHeader
                 title="Risk over time"
@@ -404,13 +411,13 @@ function LoadingView() {
     <div className="min-h-screen">
       <div className="h-14 border-b border-border" />
       <div className="mx-auto max-w-[1600px] px-4 py-5 sm:px-6">
+        <Skeleton className="mb-4 h-[174px]" />
         <div className="grid gap-4 lg:grid-cols-[264px_minmax(0,1fr)]">
           <div className="space-y-4">
             <Skeleton className="h-52" />
             <Skeleton className="h-40" />
           </div>
           <div className="space-y-4">
-            <Skeleton className="h-[124px]" />
             <Skeleton className="h-[290px]" />
             <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
               <Skeleton className="h-64" />
