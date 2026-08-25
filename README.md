@@ -260,6 +260,115 @@ Built as a working instrument rather than a landing page.
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    subgraph feeds["External data"]
+        direction TB
+        CG["CoinGecko<br/>live quotes + 30-day history"]
+        RPC["Solana mainnet RPC<br/>SOL and SPL token balances"]
+    end
+
+    subgraph engine["Sentra engine — Node, Express, TypeScript"]
+        direction TB
+        PRICE["price.service<br/>retry, cache, measures<br/>the sampling interval"]
+        CHAIN["blockchain.service<br/>balance reads, snapshot writes"]
+        LOOP["risk.engine<br/>tick loop, stress signals,<br/>blended score"]
+        QUANT["risk.service — quant core<br/>EWMA covariance, VaR,<br/>Expected Shortfall,<br/>Euler attribution, concentration"]
+        STORE["metrics.store<br/>ring buffer, risk history"]
+        REST["REST API<br/>/overview, /health, /ready"]
+        DISK[("DATA_DIR<br/>registry, price cache,<br/>risk history")]
+    end
+
+    subgraph out["Outputs"]
+        direction TB
+        DASH["Dashboard<br/>Next.js static export<br/>on GitHub Pages"]
+        TG["Telegram alert"]
+        PROG["Anchor program on devnet<br/>immutable risk snapshot"]
+    end
+
+    CG --> PRICE
+    RPC --> CHAIN
+    PRICE --> LOOP
+    CHAIN --> LOOP
+    LOOP <--> QUANT
+    LOOP --> STORE
+    STORE --> REST
+    PRICE -.-> DISK
+    STORE -.-> DISK
+
+    REST --> DASH
+    LOOP --> TG
+    CHAIN --> PROG
+```
+
+Two clusters, deliberately. Balances are **read** from mainnet, because that is
+where the money is. Snapshots are **written** to devnet, because anchoring a
+score should not cost mainnet rent to demonstrate. The quant core is pure —
+no network, no clock, no I/O — which is why it is the part with the most tests.
+
+### What happens in one tick
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant T as risk.engine
+    participant P as price.service
+    participant C as blockchain.service
+    participant Q as quant core
+    participant S as metrics.store
+    participant A as Telegram
+
+    T->>P: fetch live quotes
+    P-->>T: prices, or last good ones flagged stale
+    Note over T: rapid drops, volatility spikes and<br/>correlated drawdowns become a stress score
+    T->>P: refresh 30-day history (hourly)
+    P-->>T: series + measured sampling interval
+
+    loop each monitored wallet
+        T->>C: read SOL and SPL balances
+        C-->>T: holdings
+        T->>Q: weights by symbol + return series
+        Q-->>T: VaR, ES, attribution, concentration
+        Note over T: blend into one score, 0-100
+        T->>S: write metrics and one history point
+    end
+
+    alt score above threshold
+        T->>A: alert, rate-limited per wallet
+    end
+```
+
+A tick that overruns skips the next slot rather than overlapping it, and a
+wallet removed mid-tick is discarded rather than written back.
+
+### What a user does
+
+```mermaid
+flowchart TD
+    START(["Open the dashboard"]) --> CHECK{"Engine<br/>reachable?"}
+
+    CHECK -- no --> DEMO["Clearly labelled demo data:<br/>two books, same balance,<br/>very different risk"]
+    DEMO --> CONNECT["Connect an engine<br/>stored per browser"]
+    CONNECT --> CHECK
+
+    CHECK -- yes --> LIVE["Live wallets, scored"]
+    LIVE --> RO{"Engine accepts<br/>changes?"}
+    RO -- "no, API key set" --> BROWSE["Browse the scored book"]
+    RO -- yes --> ADD["Add a Solana address"]
+
+    ADD --> TICK["Next tick prices the wallet"]
+    BROWSE --> SCORE
+    TICK --> SCORE["VaR, Expected Shortfall,<br/>risk attribution, blended score"]
+
+    SCORE --> READ["See where the risk is,<br/>not just where the value is"]
+    SCORE --> ALERT{"Above the<br/>alert threshold?"}
+    ALERT -- yes --> TG["Telegram alert"]
+    ALERT -- no --> WATCH["Keep watching"]
+    SCORE -.-> SNAP["Optional: anchor the score on-chain"]
+```
+
+### Repository layout
+
 ```
 sentra/
 ├── sentra/
