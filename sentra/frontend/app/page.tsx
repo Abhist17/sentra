@@ -7,6 +7,7 @@ import { usd, pct, timeAgo, engineStatus } from "@/lib/format";
 import { TopBar } from "@/components/TopBar";
 import { StatusAnnouncer } from "@/components/StatusAnnouncer";
 import { EngineUrlDialog } from "@/components/EngineUrlDialog";
+import { HowItWorks } from "@/components/HowItWorks";
 import { SummaryPanel } from "@/components/SummaryPanel";
 import { TrendChart } from "@/components/TrendChart";
 import { HoldingsTable } from "@/components/HoldingsTable";
@@ -28,6 +29,7 @@ export default function Dashboard() {
   const { data, error, loading, refreshing, refresh, demo } = useOverview(10_000);
   const [selected, setSelected] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   // Default to the riskiest wallet, and recover gracefully if the selected
   // one is removed.
@@ -69,11 +71,14 @@ export default function Dashboard() {
   });
 
   const settings = (
-    <EngineUrlDialog
-      open={settingsOpen}
-      onClose={() => setSettingsOpen(false)}
-      onSaved={() => void refresh()}
-    />
+    <>
+      <EngineUrlDialog
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onSaved={() => void refresh()}
+      />
+      <HowItWorks open={helpOpen} onClose={() => setHelpOpen(false)} />
+    </>
   );
 
   if (loading) return <LoadingView />;
@@ -116,6 +121,7 @@ export default function Dashboard() {
         refreshing={refreshing}
         onRefresh={() => void refresh()}
         onOpenSettings={() => setSettingsOpen(true)}
+        onOpenHelp={() => setHelpOpen(true)}
       />
       {settings}
 

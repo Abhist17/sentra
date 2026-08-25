@@ -86,6 +86,7 @@ export function TopBar({
   refreshing,
   onRefresh,
   onOpenSettings,
+  onOpenHelp,
 }: {
   demo?: boolean;
   lastTickAt: number;
@@ -94,6 +95,7 @@ export function TopBar({
   refreshing: boolean;
   onRefresh: () => void;
   onOpenSettings: () => void;
+  onOpenHelp: () => void;
 }) {
   const mounted = useMounted();
   useNow(1000); // keeps the relative timestamp honest
@@ -109,7 +111,37 @@ export function TopBar({
           Portfolio risk monitor
         </span>
 
-        <div className="ml-auto flex items-center gap-1.5">
+        {/* Spelled out rather than hidden behind a "?" — the score means
+            nothing to a first-time reader, and a glyph does not advertise
+            that there is an explanation waiting. */}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={onOpenHelp}
+          className="ml-auto shrink-0"
+        >
+          <svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true">
+            <circle
+              cx="7"
+              cy="7"
+              r="5.9"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              fill="none"
+            />
+            <path
+              d="M5.3 5.2a1.75 1.75 0 1 1 2.3 1.7c-.4.2-.6.5-.6.9v.4"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              strokeLinecap="round"
+              fill="none"
+            />
+            <circle cx="7" cy="10.3" r="0.75" fill="currentColor" />
+          </svg>
+          <span className="hidden sm:inline">How it works</span>
+        </Button>
+
+        <div className="flex items-center gap-1.5">
           <span className="flex items-center gap-1.5 rounded-md border border-border px-2 py-1">
             <Dot color={status.color} pulse={status.pulse} />
             <span className="text-[11px] font-medium text-secondary">
