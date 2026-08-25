@@ -86,6 +86,15 @@ services:
       - key: API_KEY
         generateValue: true
 
+      # Fine while the service sleeps between visitors. If you move to an
+      # always-on plan, do this arithmetic first: one price call per tick plus
+      # four history calls an hour is ~46,000 CoinGecko calls a month at 60s,
+      # against a 10,000/month cap on their free Demo key. Roughly 600000
+      # (10 min) fits the free tier; anything faster wants a paid key.
+      #
+      # Going over degrades rather than breaks — the engine backs off on 429
+      # and serves its last good quotes, flagged as stale — but the numbers
+      # stop being live, which is the entire point of them.
       - key: MONITOR_INTERVAL
         value: "60000"
       - key: RISK_ALERT_THRESHOLD
