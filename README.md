@@ -11,6 +11,13 @@ Sentra tells you how much you stand to lose.
 
 </div>
 
+![The Sentra dashboard: a blended risk dial reading 33.7, portfolio exposure and Value at Risk, a live risk trend, and the holdings behind it](docs/dashboard.png)
+
+<div align="center">
+<sub>Two books holding roughly the same value — and carrying very different
+risk. That gap is the product.</sub>
+</div>
+
 ---
 
 ## The problem
