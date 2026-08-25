@@ -1,13 +1,70 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RiskPoint } from "@/lib/types";
 import { riskBand, pct, usd, clockTime } from "@/lib/format";
 import { EmptyState } from "./ui";
 
-const W = 800;
 const H = 210;
 const PAD = { top: 12, right: 12, bottom: 24, left: 40 };
+
+/** Used for the first paint and for static export, before a real box exists. */
+const FALLBACK_W = 800;
+
+/**
+ * Reports the element's own pixel width so the chart can draw in real pixels.
+ *
+ * The alternative — a fixed viewBox stretched with preserveAspectRatio="none"
+ * — scales x and y by different factors, which distorts everything that is
+ * not a plain line: the axis labels rendered squashed or stretched depending
+ * on the container, and the hover marker drew as an ellipse.
+ */
+function useMeasuredWidth(fallback: number) {
+  const [width, setWidth] = useState(fallback);
+  const nodeRef = useRef<SVGSVGElement | null>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
+
+  const measure = useCallback(() => {
+    const el = nodeRef.current;
+    if (!el) return;
+    const next = Math.round(el.getBoundingClientRect().width);
+    if (next > 0) setWidth((current) => (current === next ? current : next));
+  }, []);
+
+  /**
+   * A callback ref rather than an effect: the chart renders an empty state
+   * until it has two points, so the element this measures does not exist on
+   * mount. An effect would run once against a null ref and never re-attach,
+   * leaving the chart drawing at the fallback width for the rest of the
+   * session once real data arrived.
+   */
+  const ref = useCallback(
+    (node: SVGSVGElement | null) => {
+      observerRef.current?.disconnect();
+      observerRef.current = null;
+      nodeRef.current = node;
+      if (!node) return;
+
+      measure();
+      if (typeof ResizeObserver === "undefined") return;
+
+      const observer = new ResizeObserver(measure);
+      observer.observe(node);
+      observerRef.current = observer;
+    },
+    [measure]
+  );
+
+  // Only a backstop for browsers without ResizeObserver; elsewhere the
+  // observer already covers every resize, container ones included.
+  useEffect(() => {
+    if (typeof ResizeObserver !== "undefined") return;
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [measure]);
+
+  return [ref, width, nodeRef] as const;
+}
 
 export function TrendChart({
   points,
@@ -17,7 +74,9 @@ export function TrendChart({
   threshold: number;
 }) {
   const [hover, setHover] = useState<number | null>(null);
-  const svgRef = useRef<SVGSVGElement>(null);
+  // The element being measured is the one being drawn into, so the viewBox
+  // and the pixel box can never disagree.
+  const [svgRef, W, svgNode] = useMeasuredWidth(FALLBACK_W);
 
   const model = useMemo(() => {
     if (points.length < 2) return null;
@@ -63,7 +122,7 @@ export function TrendChart({
       thresholdY: y(Math.max(min, Math.min(max, threshold))),
       thresholdVisible: threshold >= min && threshold <= max,
     };
-  }, [points, threshold]);
+  }, [points, threshold, W]);
 
   if (!model) {
     return (
@@ -83,11 +142,12 @@ export function TrendChart({
   const delta = last - first;
 
   function locate(clientX: number) {
-    const rect = svgRef.current?.getBoundingClientRect();
+    const rect = svgNode.current?.getBoundingClientRect();
     if (!rect) return;
-    const ratio = (clientX - rect.left) / rect.width;
+    // The viewBox is the element's own pixel box, so a client offset is
+    // already a chart coordinate — no ratio conversion to drift out of sync.
     const innerW = W - PAD.left - PAD.right;
-    const i = Math.round(((ratio * W - PAD.left) / innerW) * (points.length - 1));
+    const i = Math.round(((clientX - rect.left - PAD.left) / innerW) * (points.length - 1));
     setHover(Math.max(0, Math.min(points.length - 1, i)));
   }
 
@@ -120,9 +180,8 @@ export function TrendChart({
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
-        className="w-full touch-none"
+        className="block w-full touch-none"
         style={{ height: H }}
-        preserveAspectRatio="none"
         onMouseMove={(e) => locate(e.clientX)}
         onMouseLeave={() => setHover(null)}
         role="img"
