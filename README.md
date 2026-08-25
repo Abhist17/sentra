@@ -75,12 +75,20 @@ under current conditions.
 | Component | Range | What it measures |
 |:--|:--|:--|
 | Value at Risk | 0 – 100 | 95% one-day loss as a share of portfolio value |
-| Concentration | 0 / 10 / 20 | Penalty when one asset exceeds 30% / 50% of the book |
+| Concentration | 0 – 20 | How much of the book rides on too few positions |
 | Market stress | 0 – 25 | Systemic signals scaled into the score |
 | Trend | 0 / 5 | Penalty when the heaviest holding is falling |
 
 The dashboard shows this breakdown for every wallet, so the number is never a
 black box — you can always see which component moved it.
+
+Concentration is the worse of two continuous measures: how dominant the largest
+position is, and how many assets the book *effectively* holds by the
+Herfindahl index. Either alone has a blind spot the other covers — the largest
+weight cannot tell 50/50 from 50/10/10/10/10/10, and the Herfindahl term alone
+would let a 75% position hide behind a long tail of small ones. Both ramps are
+continuous on purpose: a threshold that jumps ten points the instant a holding
+crosses 50% turns a rounding-error price move into an alert.
 
 ### Weight is not risk
 
@@ -229,7 +237,13 @@ Built as a working instrument rather than a landing page.
 - **Colour carries meaning, nothing else.** The interface is monochrome; colour
   appears only for risk band and asset allocation. When something is coloured on
   screen, it is telling you something.
-- **Keyboard-first.** `j`/`k` or arrows move between wallets, `/` adds one.
+- **Keyboard-first.** `j`/`k` or arrows move between wallets, `/` adds one. The
+  trend chart takes focus too — left/right step through the series, home/end
+  jump to either end.
+- **The time axis is real.** Points are placed by timestamp, not by index, and
+  a gap wider than the usual cadence breaks the line instead of drawing across
+  it. An engine that was off for three hours looks like it was off for three
+  hours.
 - **Sparklines** in the wallet list: the current score says which book is worst
   now, the shape says which is getting worse.
 - **Every figure is traceable.** The score breakdown shows exactly which
@@ -237,6 +251,8 @@ Built as a working instrument rather than a landing page.
 - **Honest states.** A degraded price feed, a stale tick, an engine error and
   incomplete return coverage each say so explicitly rather than rendering a
   confident-looking number.
+- **Announced, not just coloured.** Risk-band and engine-state changes reach a
+  live region, so the transitions colour carries are not sighted-only.
 - Light and dark, following your system preference.
 - Charts are hand-rolled SVG — no charting dependency.
 
@@ -282,12 +298,13 @@ The engine is a plain REST service — the dashboard is only one possible client
 
 | Method | Route | Purpose |
 |:--|:--|:--|
-| `GET` | `/health` | Liveness, engine state, feature flags |
+| `GET` | `/health` | Liveness, build version, engine state, feature flags |
+| `GET` | `/ready` | Readiness — 503 with the failing checks when not scoring |
 | `GET` | `/overview` | Everything the dashboard needs, in one call |
 | `GET` | `/risk` | Value-weighted risk across all wallets |
 | `GET` | `/portfolio` | Total exposure and aggregate VaR |
 | `GET` | `/prices` · `/market` | Live quotes, per-tick changes, stress signals |
-| `GET` | `/history?wallet=` | In-memory risk series |
+| `GET` | `/history?wallet=` | Risk series, persisted across restarts |
 | `GET` | `/wallets` | Monitored wallets with their latest metrics |
 | `POST` | `/wallet/add` | `{ address, label? }` |
 | `DELETE` | `/wallet/remove` | `{ address }` or `?address=` |
@@ -296,6 +313,13 @@ The engine is a plain REST service — the dashboard is only one possible client
 
 Write routes require an `x-api-key` header whenever `API_KEY` is set. All routes
 are rate-limited per IP.
+
+`/health` and `/ready` answer different questions on purpose. `/health` is
+liveness and always returns 200 if the process can respond — point platform
+probes at it. `/ready` reports whether the engine has completed a recent tick
+and loaded a return series, and returns 503 naming what is failing. Failing a
+platform probe on readiness would restart the container every time the public
+price feed rate-limits, which a restart cannot fix.
 
 ```bash
 curl https://your-engine.onrender.com/risk
@@ -351,14 +375,16 @@ anchor test              # program integration tests
 
 ### Tests
 
-118 tests, none of which need the network.
+144 tests, none of which need the network.
 
 | Suite | Count | Covers |
 |:--|--:|:--|
-| Quant core | 38 | Horizon scaling, EWMA, VaR/ES, historical simulation, Euler attribution |
+| Quant core | 40 | Horizon scaling, EWMA, VaR/ES, historical simulation, Euler attribution, concentration |
 | Market signals | 17 | Drops, volatility window, correlation breakdown, stress bands |
-| HTTP API | 23 | Routing, validation, error mapping, API key, rate limiting, CORS |
-| Frontend | 29 | Formatting across eight orders of magnitude, risk bands, engine-URL resolution |
+| HTTP API | 26 | Routing, validation, error mapping, API key, rate limiting, CORS, readiness |
+| Wallet registry | 7 | Address validation, limits, persistence |
+| Store | 8 | History ring buffer, and what a restart is allowed to reinstate |
+| Frontend | 35 | Formatting across eight orders of magnitude, risk bands, engine status, engine-URL resolution |
 | On-chain | 11 | PDA derivation, authorization, timestamp bounds, rent reclaim |
 
 ### Configuration
@@ -374,8 +400,9 @@ Everything is environment-driven — see
 | `VAR_HORIZON_DAYS` | `1` | Reporting horizon for VaR and ES |
 | `VAR_CONFIDENCE` | `0.95` | One day in twenty |
 | `VAR_LAMBDA` | `0.94` | Daily-equivalent EWMA decay, rescaled to the sampling rate |
+| `RELEASE` | package version | Build identifier reported by `/health` |
 | `MAX_WALLETS` | `25` | Each wallet costs an RPC call per tick |
-| `DATA_DIR` | `./.data` | Wallet registry + price cache |
+| `DATA_DIR` | `./.data` | Wallet registry, price cache and risk history — mount a volume on ephemeral hosts |
 | `SIMULATION_MODE` | `false` | Synthetic portfolio for empty wallets — demos only |
 | `ENABLE_ONCHAIN_WRITES` | `false` | Costs SOL on every interval |
 
