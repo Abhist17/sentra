@@ -77,6 +77,9 @@ export function TrendChart({
   // The element being measured is the one being drawn into, so the viewBox
   // and the pixel box can never disagree.
   const [svgRef, W, svgNode] = useMeasuredWidth(FALLBACK_W);
+  // Touch scrubs only while a finger is down. Tracking on every touch move
+  // would fight the page scroll for the width of the chart.
+  const dragging = useRef(false);
 
   const model = useMemo(() => {
     if (points.length < 2) return null;
@@ -151,6 +154,35 @@ export function TrendChart({
     setHover(Math.max(0, Math.min(points.length - 1, i)));
   }
 
+  /** Keyboard scrubbing. Up/down stay unbound — the page uses them to move
+   *  between wallets, and stealing them here would trap that navigation. */
+  function onKeyDown(e: React.KeyboardEvent<SVGSVGElement>) {
+    const lastIndex = points.length - 1;
+    const current = hover ?? lastIndex;
+
+    switch (e.key) {
+      case "ArrowLeft":
+        e.preventDefault();
+        setHover(Math.max(0, current - 1));
+        break;
+      case "ArrowRight":
+        e.preventDefault();
+        setHover(Math.min(lastIndex, current + 1));
+        break;
+      case "Home":
+        e.preventDefault();
+        setHover(0);
+        break;
+      case "End":
+        e.preventDefault();
+        setHover(lastIndex);
+        break;
+      case "Escape":
+        setHover(null);
+        break;
+    }
+  }
+
   return (
     <div className="px-1 pb-3 pt-3">
       <div className="mb-2 flex items-baseline justify-between gap-4 px-3">
@@ -177,15 +209,56 @@ export function TrendChart({
         </span>
       </div>
 
+      {/* Only announces while scrubbing. Left always-on it would read out
+          every poll, which is noise rather than information. */}
+      <span role="status" aria-live="polite" className="sr-only">
+        {hover !== null
+          ? `${active.risk.toFixed(1)} at ${clockTime(active.t)}, portfolio ${usd(
+              active.portfolio
+            )}`
+          : ""}
+      </span>
+
+      {/* touch-pan-y rather than touch-none: a vertical swipe still scrolls
+          the page while a horizontal drag scrubs. `touch-none` swallowed
+          both, so on a phone the chart was an unscrollable dead zone that
+          offered nothing in exchange. */}
       <svg
         ref={svgRef}
         viewBox={`0 0 ${W} ${H}`}
-        className="block w-full touch-none"
+        className="block w-full touch-pan-y focus-visible:outline-2"
         style={{ height: H }}
-        onMouseMove={(e) => locate(e.clientX)}
-        onMouseLeave={() => setHover(null)}
+        onPointerDown={(e) => {
+          if (e.pointerType !== "mouse") {
+            dragging.current = true;
+            e.currentTarget.setPointerCapture(e.pointerId);
+          }
+          locate(e.clientX);
+        }}
+        onPointerMove={(e) => {
+          if (e.pointerType === "mouse" || dragging.current) locate(e.clientX);
+        }}
+        onPointerUp={() => {
+          // The reading stays put after a touch — lifting a finger to read
+          // the number should not erase it.
+          dragging.current = false;
+        }}
+        onPointerCancel={() => {
+          dragging.current = false;
+        }}
+        onPointerLeave={(e) => {
+          if (e.pointerType === "mouse") setHover(null);
+        }}
+        onKeyDown={onKeyDown}
+        tabIndex={0}
         role="img"
-        aria-label={`Risk trend across ${points.length} points`}
+        aria-label={
+          `Risk trend, ${points.length} points. ` +
+          `${hover !== null ? "Inspecting" : "Latest"}: ` +
+          `${active.risk.toFixed(1)} at ${clockTime(active.t)}, ` +
+          `portfolio ${usd(active.portfolio)}. ` +
+          `Left and right arrows step through the series.`
+        }
       >
         <defs>
           <linearGradient id="trend-fill" x1="0" y1="0" x2="0" y2="1">
