@@ -53,6 +53,11 @@ function readVersion(): string {
   const release = process.env.RELEASE?.trim();
   if (release) return release;
 
+  // Render injects the deployed commit. Using it means /health identifies the
+  // running build on the host this repo ships with, without any config.
+  const renderCommit = process.env.RENDER_GIT_COMMIT?.trim();
+  if (renderCommit) return renderCommit.slice(0, 12);
+
   try {
     const raw = fs.readFileSync(
       path.join(__dirname, "..", "..", "package.json"),

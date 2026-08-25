@@ -3,9 +3,30 @@
 #   1. Push this repo to GitHub
 #   2. Render dashboard → New → Blueprint → pick this repo
 #   3. Fill in the prompted secrets (all optional; the engine runs without them)
+#   4. Set NEXT_PUBLIC_API_URL as a repo variable to the deployed URL, so the
+#      GitHub Pages dashboard talks to it by default
 #
 # The dashboard (frontend) is a static export and is deployed separately to
 # GitHub Pages by .github/workflows/deploy-pages.yml.
+#
+# ── WHAT THE FREE PLAN CAN AND CANNOT DO ─────────────────────────
+#
+# This blueprint deploys on the free plan, which is enough for a public demo
+# and not enough for real monitoring. Know which you are getting:
+#
+#   • Render spins a free service down after 15 minutes without traffic. A
+#     sleeping engine does not tick, so it is not monitoring anything and
+#     will not send a Telegram alert. Loading the dashboard wakes it; the
+#     first request takes about a minute, during which the dashboard shows
+#     demo data and then switches itself to live once the engine answers.
+#
+#   • Free services cannot mount a persistent disk. The wallet registry and
+#     the risk history therefore reset on every spin-down and deploy. That is
+#     why there is no `disk:` block below — adding one to a free service is
+#     rejected, and the blueprint will not deploy at all.
+#
+# For an engine that actually runs continuously, switch `plan` to `starter`
+# and uncomment the disk and DATA_DIR below. Nothing else changes.
 
 services:
   - type: web
@@ -22,26 +43,36 @@ services:
     # restart cannot fix. Poll /ready from monitoring instead.
     healthCheckPath: /health
 
-    # The wallet registry and price-history cache live here. Without a disk
-    # they reset on every deploy and cold start.
-    disk:
-      name: sentra-data
-      mountPath: /var/data
-      sizeGB: 1
+    # Persistent storage for the wallet registry, price cache and risk
+    # history. Requires a paid plan — free services cannot mount a disk, and
+    # a blueprint that asks for one on a free service is rejected outright.
+    #
+    # Uncomment together with the DATA_DIR var below after moving off free:
+    #
+    # disk:
+    #   name: sentra-data
+    #   mountPath: /var/data
+    #   sizeGB: 1
 
     envVars:
       - key: NODE_VERSION
         value: "20"
-      - key: DATA_DIR
-        value: /var/data
+
+      # Only meaningful with the disk above. Left unset, the engine writes to
+      # ./.data inside the container, which is wiped on every restart.
+      # - key: DATA_DIR
+      #   value: /var/data
 
       # Cluster risk snapshots are WRITTEN to. Devnet unless you deploy the
       # program elsewhere.
       - key: RPC_URL
         value: https://api.devnet.solana.com
 
-      # Cluster real balances are READ from. The public endpoint rate-limits
-      # hard — set a Helius/QuickNode URL for anything beyond a demo.
+      # Cluster real balances are READ from. Set this — it is the single most
+      # likely reason a deployed engine prices nothing. The public endpoint
+      # (api.mainnet-beta.solana.com) rate-limits hard and routinely refuses
+      # datacenter IPs outright, so an engine that works on your laptop can
+      # fail on a host. A free Helius or QuickNode key is enough.
       - key: MAINNET_RPC_URL
         sync: false
 
