@@ -252,6 +252,91 @@ export function aggregateReturns(returns: number[], k: number): number[] {
   return out;
 }
 
+// ── Concentration ────────────────────────────────────────────────
+
+/** Most the blended score will add for concentration alone. */
+export const MAX_CONCENTRATION_PENALTY = 20;
+
+/** Largest-position share where the penalty starts, and where it saturates. */
+const DOMINANCE_FLOOR = 0.3;
+const DOMINANCE_CEILING = 0.7;
+
+/**
+ * How many equally-weighted names count as properly diversified. Four,
+ * because four is how many assets the engine prices — a book cannot be asked
+ * to spread across names the model cannot see.
+ */
+const TARGET_ASSETS = 4;
+
+export interface Concentration {
+  /** Points added to the blended score, 0 to MAX_CONCENTRATION_PENALTY. */
+  penalty: number;
+  /** Largest single-asset share, 0-1. */
+  maxWeight: number;
+  /** Herfindahl-Hirschman index, 0-1. 1 is everything in one asset. */
+  hhi: number;
+  /**
+   * 1/HHI — how many equally-sized positions this book behaves like. A
+   * 50/10/10/10/10/10 split holds six assets and behaves like 3.3.
+   */
+  effectiveAssets: number;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+/**
+ * Concentration risk from a set of portfolio weights.
+ *
+ * Two things count as concentration and the score takes the worse of them:
+ *
+ *  - DOMINANCE. One position large enough that its own move sets the day.
+ *  - SPREAD. Too few effective names, however evenly the rest are split.
+ *
+ * Either alone is blind in a way the other is not. The largest weight cannot
+ * tell 50/50 from 50/10/10/10/10/10 — same dominant position, very different
+ * book. The Herfindahl index cannot tell 60/20/20 from 40/30/30 as sharply as
+ * a reader would want, because a 60% position really does deserve more than
+ * its share of the index. Taking the maximum keeps both signals honest.
+ *
+ * Both ramps are continuous, which is the point. The thresholds this replaces
+ * jumped ten points the instant the largest holding crossed 30% or 50%, so a
+ * price move of a fraction of a percent could push a wallet over the alert
+ * line and buzz someone's phone about nothing.
+ */
+export function concentrationPenalty(weights: number[]): Concentration {
+  const usable = weights.filter((w) => Number.isFinite(w) && w > 0);
+
+  if (usable.length === 0) {
+    return { penalty: 0, maxWeight: 0, hhi: 0, effectiveAssets: 0 };
+  }
+
+  // Callers pass shares that should already sum to 1, but a book with an
+  // unpriced asset arrives short. Normalising keeps the index comparable
+  // across wallets instead of quietly rewarding missing data.
+  const total = usable.reduce((a, b) => a + b, 0);
+  const shares = usable.map((w) => w / total);
+
+  const maxWeight = Math.max(...shares);
+  const hhi = shares.reduce((sum, w) => sum + w * w, 0);
+  const effectiveAssets = hhi > 0 ? 1 / hhi : 0;
+
+  const dominance = clamp01(
+    (maxWeight - DOMINANCE_FLOOR) / (DOMINANCE_CEILING - DOMINANCE_FLOOR)
+  );
+  const spread = clamp01(
+    (TARGET_ASSETS - effectiveAssets) / (TARGET_ASSETS - 1)
+  );
+
+  return {
+    penalty: MAX_CONCENTRATION_PENALTY * Math.max(dominance, spread),
+    maxWeight,
+    hhi,
+    effectiveAssets,
+  };
+}
+
 // ── Portfolio risk ───────────────────────────────────────────────
 
 export interface RiskInputs {

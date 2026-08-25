@@ -22,6 +22,8 @@ import {
   aggregateReturns,
   scaleLambdaToFrequency,
   calculatePortfolioRisk,
+  concentrationPenalty,
+  MAX_CONCENTRATION_PENALTY,
   MIN_HISTORICAL_OBSERVATIONS,
 } from "../services/risk.service";
 
@@ -522,4 +524,107 @@ test("perfectly correlated assets show no diversification benefit", () => {
     Math.abs(r.diversificationRatio - 1) < 1e-6,
     `identical assets cannot diversify, got ${r.diversificationRatio}`
   );
+});
+
+// ── Concentration ────────────────────────────────────────────────
+
+test("everything in one asset takes the full concentration penalty", () => {
+  const c = concentrationPenalty([1]);
+
+  assert.equal(c.penalty, MAX_CONCENTRATION_PENALTY);
+  assert.equal(c.maxWeight, 1);
+  assert.ok(Math.abs(c.effectiveAssets - 1) < 1e-9);
+});
+
+test("an evenly spread book of the target size takes none", () => {
+  const c = concentrationPenalty([0.25, 0.25, 0.25, 0.25]);
+
+  assert.equal(c.penalty, 0);
+  assert.ok(Math.abs(c.effectiveAssets - 4) < 1e-9);
+});
+
+test("the penalty is continuous — no cliff at any weight", () => {
+  // The whole point of replacing the thresholds. Walk the largest weight in
+  // 1% steps and assert no step moves the score more than a fraction of a
+  // point; the old rule jumped ten at 0.30 and again at 0.50.
+  let previous = concentrationPenalty([0.2, 0.8]).penalty;
+
+  for (let w = 21; w <= 99; w++) {
+    const weight = w / 100;
+    const penalty = concentrationPenalty([weight, 1 - weight]).penalty;
+    assert.ok(
+      Math.abs(penalty - previous) < 1,
+      `jump of ${Math.abs(penalty - previous).toFixed(2)} at weight ${weight}`
+    );
+    previous = penalty;
+  }
+});
+
+test("the penalty never decreases as one position grows", () => {
+  let previous = -1;
+
+  for (let w = 25; w <= 100; w++) {
+    const weight = w / 100;
+    const rest = (1 - weight) / 3;
+    const penalty = concentrationPenalty([weight, rest, rest, rest]).penalty;
+    assert.ok(penalty >= previous - 1e-9, `dropped at weight ${weight}`);
+    previous = penalty;
+  }
+});
+
+test("effective asset count sees past the largest weight", () => {
+  // Same dominant position, very different books. The largest weight cannot
+  // tell them apart; the Herfindahl term can.
+  const twoWay = concentrationPenalty([0.5, 0.5]);
+  const spread = concentrationPenalty([0.5, 0.1, 0.1, 0.1, 0.1, 0.1]);
+
+  assert.ok(Math.abs(twoWay.maxWeight - spread.maxWeight) < 1e-9);
+  assert.ok(spread.effectiveAssets > twoWay.effectiveAssets);
+  assert.ok(spread.penalty < twoWay.penalty);
+});
+
+test("a dominant position still scores even when the rest is spread thin", () => {
+  // The Herfindahl term alone would let a 75% position hide behind a long
+  // tail of small ones. Taking the worse of the two signals stops that.
+  const dominant = concentrationPenalty([
+    0.75, 0.05, 0.05, 0.05, 0.05, 0.05,
+  ]);
+
+  assert.ok(dominant.effectiveAssets > 1.7);
+  assert.ok(dominant.penalty > 20 * 0.9);
+});
+
+test("weights are normalised, so an unpriced asset cannot flatter a book", () => {
+  // Shares arriving short of 1 (a holding with no price) must not read as
+  // more diversified than the same book scaled to 1.
+  const short = concentrationPenalty([0.4, 0.1]);
+  const full = concentrationPenalty([0.8, 0.2]);
+
+  assert.ok(Math.abs(short.penalty - full.penalty) < 1e-9);
+  assert.ok(Math.abs(short.maxWeight - full.maxWeight) < 1e-9);
+});
+
+test("empty and degenerate weights return zeros rather than NaN", () => {
+  for (const weights of [[], [0], [0, 0], [NaN, Infinity], [-1, -2]]) {
+    const c = concentrationPenalty(weights);
+    assert.ok(Number.isFinite(c.penalty), `penalty NaN for ${weights}`);
+    assert.equal(c.penalty, 0);
+    assert.equal(c.effectiveAssets, 0);
+  }
+});
+
+test("the penalty stays inside its declared range", () => {
+  const books = [
+    [1],
+    [0.5, 0.5],
+    [0.34, 0.33, 0.33],
+    [0.25, 0.25, 0.25, 0.25],
+    [0.97, 0.02, 0.01],
+    [0.2, 0.2, 0.2, 0.2, 0.2],
+  ];
+
+  for (const weights of books) {
+    const { penalty } = concentrationPenalty(weights);
+    assert.ok(penalty >= 0 && penalty <= MAX_CONCENTRATION_PENALTY);
+  }
 });

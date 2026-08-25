@@ -35,7 +35,9 @@ const FACTORS = [
   {
     key: "concentration" as const,
     label: "Concentration",
-    note: "Applied when one asset exceeds 30% or 50% of the book",
+    note:
+      "Rises with the largest position, and with how few assets the book " +
+      "effectively holds",
   },
   {
     key: "stress" as const,

@@ -7,7 +7,11 @@ import {
   type AssetSymbol,
   type PriceMap,
 } from "../services/price.service";
-import { computeReturns, calculatePortfolioRisk } from "../services/risk.service";
+import {
+  computeReturns,
+  calculatePortfolioRisk,
+  concentrationPenalty,
+} from "../services/risk.service";
 import { sendTelegramAlert } from "../services/telegram.service";
 import {
   createProvider,
@@ -527,11 +531,8 @@ async function runTick() {
       }
 
       /* 6c. HYBRID RISK — portfolio risk plus market context */
-      const maxWeight = Math.max(...holdings.map((h) => h.weight));
-
-      let concentrationRisk = 0;
-      if (maxWeight > 0.5) concentrationRisk = 20;
-      else if (maxWeight > 0.3) concentrationRisk = 10;
+      const concentration = concentrationPenalty(holdings.map((h) => h.weight));
+      const { penalty: concentrationRisk, maxWeight } = concentration;
 
       // Short-term trend from the live window of the largest holding.
       const heaviest = holdings.reduce((a, b) => (a.weight > b.weight ? a : b));
@@ -609,7 +610,9 @@ async function runTick() {
           `Portfolio: $${portfolioValue.toFixed(2)} | ` +
           `Risk: ${hybridRisk.toFixed(2)}% ` +
           `(VaR: ${varRisk.toFixed(1)} [${risk.headlineModel}] + ` +
-          `Conc: ${concentrationRisk} + Trend: ${trendPenalty} + ` +
+          `Conc: ${concentrationRisk.toFixed(1)} ` +
+          `[${concentration.effectiveAssets.toFixed(1)} eff. assets] + ` +
+          `Trend: ${trendPenalty} + ` +
           `Stress: ${stressContribution.toFixed(1)})`
       );
 
