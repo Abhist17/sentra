@@ -8,6 +8,12 @@ import { riskBand } from "@/lib/format";
  * The dial and the headline figures read as one instrument, so they live in
  * one bordered panel separated by hairlines rather than in five floating
  * cards. Fewer borders, one alignment grid, less page furniture.
+ *
+ * Layout note: the figures only go four-across once there is genuinely room
+ * for them. Beside the dial on a 1280px screen four columns leave ~46px of
+ * content each, which is narrower than "$763,669" renders — the values used
+ * to spill over their dividers and the last label clipped off the panel.
+ * Two-up until `xl` costs nothing and never truncates a number.
  */
 export function SummaryPanel({
   score,
@@ -19,7 +25,7 @@ export function SummaryPanel({
   const band = riskBand(score);
 
   return (
-    <section className="card enter">
+    <section className="card enter overflow-hidden">
       <div className="flex flex-col lg:flex-row">
         <div className="flex shrink-0 items-center gap-5 border-b border-border px-6 py-5 lg:border-b-0 lg:border-r">
           <RiskDial score={score} size={124} showLabel={false} />
@@ -37,18 +43,17 @@ export function SummaryPanel({
           </div>
         </div>
 
-        <dl className="grid flex-1 grid-cols-2 md:grid-cols-4">
-          {metrics.map((metric, i) => (
+        {/* Hairlines come from a 1px gap over a border-coloured backdrop, so
+            they stay correct at every column count instead of needing a
+            different border rule per breakpoint. */}
+        <dl className="grid flex-1 grid-cols-2 gap-px bg-border xl:grid-cols-4">
+          {metrics.map((metric) => (
             <div
               key={metric.label}
-              className={`px-5 py-4 ${
-                i % 2 === 1 ? "" : "border-r border-border"
-              } ${i < 2 ? "border-b border-border md:border-b-0" : ""} ${
-                i === 3 ? "md:border-r-0" : ""
-              } ${i === 1 ? "md:border-r" : ""}`}
+              className="min-w-0 bg-surface px-5 py-4"
             >
               <dt className="label">{metric.label}</dt>
-              <dd className="numeric mt-1.5 text-xl font-medium leading-none text-text">
+              <dd className="numeric mt-1.5 truncate text-lg font-medium leading-none text-text xl:text-xl">
                 {metric.value}
               </dd>
               {metric.detail && (

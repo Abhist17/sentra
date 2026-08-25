@@ -251,7 +251,12 @@ export default function Dashboard() {
                   value: active?.metrics
                     ? pct(active.metrics.maxWeight * 100, 1)
                     : "—",
-                  detail: "Largest single-asset weight",
+                  // The other three figures are portfolio-wide; this one is
+                  // per-wallet, so it says which wallet rather than leaving
+                  // the reader to assume it aggregates like its neighbours.
+                  detail: active
+                    ? `Largest single-asset weight · ${active.label}`
+                    : "Largest single-asset weight",
                 },
               ]}
             />
