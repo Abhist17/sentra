@@ -16,6 +16,10 @@ services:
     rootDir: sentra/backend
     buildCommand: npm ci && npm run build
     startCommand: npm start
+    # Liveness, not readiness. /ready reports whether the engine is actually
+    # producing numbers, but pointing the platform probe at it would restart
+    # the container every time the public price feed rate-limits — which a
+    # restart cannot fix. Poll /ready from monitoring instead.
     healthCheckPath: /health
 
     # The wallet registry and price-history cache live here. Without a disk

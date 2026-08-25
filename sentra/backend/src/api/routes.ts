@@ -122,21 +122,77 @@ export function registerRoutes(app: Express) {
   app.use(rateLimiter(CONFIG.RATE_LIMIT_PER_MIN));
 
   /* =============================
-     Health check
+     Health and readiness
+
+     Deliberately two endpoints. /health is liveness: can this process answer
+     at all. /ready is readiness: is the engine actually producing numbers a
+     dashboard should believe.
+
+     Collapsing them into one 503 would be worse than useless here. The
+     engine's upstream is a rate-limited public price feed, so it degrades
+     several times a day for reasons a restart cannot fix — and a platform
+     health check that fails on those would cycle a perfectly healthy
+     container in a loop, taking the API down with it.
   ============================= */
-  app.get("/health", (_req, res) => {
+
+  /** Stale prices deliberately do not fail readiness — the engine serves the
+   *  last good quotes and says so, which is degraded, not broken. */
+  function readiness() {
     const market = getMarket();
+
+    // Three intervals: one for the tick that is running, one for a tick that
+    // skipped because the previous overran, and one of slack.
+    const overdueAfter = CONFIG.MONITOR_INTERVAL * 3;
+    const sinceLastTick = market.lastTickAt > 0 ? Date.now() - market.lastTickAt : null;
+
+    const checks = {
+      tickCompleted: market.lastTickAt > 0,
+      tickSucceeded: market.lastTickError === null,
+      tickOnSchedule: sinceLastTick !== null && sinceLastTick < overdueAfter,
+      // Without a return series no wallet can be scored, however healthy the
+      // rest of the engine looks.
+      historyLoaded: market.historyAssets > 0,
+    };
+
+    const failing = Object.entries(checks)
+      .filter(([, passed]) => !passed)
+      .map(([name]) => name);
+
+    return { ready: failing.length === 0, checks, failing, sinceLastTick, market };
+  }
+
+  app.get("/health", (_req, res) => {
+    const { ready, checks, market } = readiness();
+
     res.json({
       status: "ok",
+      version: CONFIG.VERSION,
+      uptimeSeconds: Math.round(process.uptime()),
+      ready,
+      checks,
       walletsMonitored: getWalletCount(),
       engine: {
         lastTickAt: market.lastTickAt,
         lastTickError: market.lastTickError,
         pricesStale: market.pricesStale,
         historyAssets: market.historyAssets,
+        monitorInterval: CONFIG.MONITOR_INTERVAL,
       },
       telegram: telegramConfigured(),
       onchainWrites: CONFIG.ENABLE_ONCHAIN_WRITES,
+      timestamp: Date.now(),
+    });
+  });
+
+  app.get("/ready", (_req, res) => {
+    const { ready, checks, failing, sinceLastTick } = readiness();
+
+    res.status(ready ? 200 : 503).json({
+      ready,
+      checks,
+      failing,
+      sinceLastTick,
+      version: CONFIG.VERSION,
       timestamp: Date.now(),
     });
   });

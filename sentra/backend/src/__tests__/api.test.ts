@@ -62,6 +62,48 @@ test("GET /health reports liveness and feature flags", async () => {
   assert.equal(typeof body.engine.lastTickAt, "number");
   assert.equal(typeof body.telegram, "boolean");
   assert.equal(typeof body.onchainWrites, "boolean");
+  assert.equal(typeof body.version, "string");
+  assert.equal(typeof body.uptimeSeconds, "number");
+});
+
+test("GET /health stays 200 even when the engine is not ready", async () => {
+  // The engine never starts in these tests, so readiness is failing. Liveness
+  // must not follow it down: a platform probe that restarts the container
+  // whenever the public price feed rate-limits would cycle a healthy service
+  // in a loop and take the API with it.
+  const res = await get("/health");
+
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.status, "ok");
+  assert.equal(body.ready, false);
+});
+
+test("GET /ready fails with the specific checks that are failing", async () => {
+  const res = await get("/ready");
+  assert.equal(res.status, 503);
+
+  const body = await res.json();
+  assert.equal(body.ready, false);
+  assert.ok(Array.isArray(body.failing));
+  // No tick has run, so there is no history and no schedule to be on.
+  for (const check of ["tickCompleted", "tickOnSchedule", "historyLoaded"]) {
+    assert.ok(body.failing.includes(check), `expected ${check} to fail`);
+  }
+  // A tick that never ran has not errored either — absence of failure is not
+  // the same as success, and the two must be reported separately.
+  assert.equal(body.checks.tickSucceeded, true);
+  assert.equal(body.sinceLastTick, null);
+});
+
+test("readiness checks and health checks agree", async () => {
+  const [health, ready] = await Promise.all([
+    get("/health").then((r) => r.json()),
+    get("/ready").then((r) => r.json()),
+  ]);
+
+  assert.equal(health.ready, ready.ready);
+  assert.deepEqual(health.checks, ready.checks);
 });
 
 test("GET /overview returns every section the dashboard needs", async () => {

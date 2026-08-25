@@ -1,4 +1,5 @@
 import dotenv from "dotenv";
+import fs from "fs";
 import path from "path";
 
 // Tests must not inherit a developer's .env — otherwise a local Telegram
@@ -40,7 +41,33 @@ function bool(key: string, fallback: boolean): boolean {
   return ["1", "true", "yes", "on"].includes(raw.trim().toLowerCase());
 }
 
+/**
+ * Build identifier reported by /health, so a deployed instance can be matched
+ * to a commit without shelling into it. RELEASE is what CI sets; the package
+ * version is the fallback for a local run.
+ *
+ * Read at runtime rather than imported: package.json sits outside rootDir, so
+ * importing it would pull it into the compiled output and break `tsc`.
+ */
+function readVersion(): string {
+  const release = process.env.RELEASE?.trim();
+  if (release) return release;
+
+  try {
+    const raw = fs.readFileSync(
+      path.join(__dirname, "..", "..", "package.json"),
+      "utf-8"
+    );
+    const version = (JSON.parse(raw) as { version?: unknown }).version;
+    return typeof version === "string" ? version : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
+
 export const CONFIG = {
+  VERSION: readVersion(),
+
   // ── Network ──────────────────────────────────────────────
   // RPC_URL         → cluster we WRITE risk snapshots to (devnet/localnet)
   // MAINNET_RPC_URL → cluster we READ real wallet balances from
