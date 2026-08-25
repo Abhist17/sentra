@@ -11,6 +11,9 @@ const PAD = { top: 12, right: 12, bottom: 24, left: 40 };
 /** Used for the first paint and for static export, before a real box exists. */
 const FALLBACK_W = 800;
 
+/** A gap this many times the usual cadence counts as missing data. */
+const GAP_FACTOR = 3;
+
 /**
  * Reports the element's own pixel width so the chart can draw in real pixels.
  *
@@ -98,17 +101,69 @@ export function TrendChart({
     const max = Math.min(100, mid + span * 0.62);
     const range = max - min || 1;
 
-    const x = (i: number) => PAD.left + (i / (points.length - 1)) * innerW;
+    // Position by TIME, not by index. Now that history survives restarts, the
+    // series can contain real gaps — a redeploy, a rate-limited tick, an
+    // engine that was simply off. Spacing points evenly draws a three-hour
+    // outage exactly like a thirty-second interval, which is the chart
+    // quietly asserting something it does not know.
+    const t0 = points[0].t;
+    const elapsed = Math.max(1, points[points.length - 1].t - t0);
+
+    const x = (i: number) => PAD.left + ((points[i].t - t0) / elapsed) * innerW;
     const y = (v: number) =>
       PAD.top + innerH - ((v - min) / range) * innerH;
 
-    const line = points
-      .map((p, i) => `${i ? "L" : "M"} ${x(i).toFixed(2)} ${y(p.risk).toFixed(2)}`)
+    // A gap far wider than the usual cadence is missing data, so the line
+    // breaks there instead of interpolating across it. Median rather than
+    // mean: one long outage would drag an average enough to hide the rest.
+    const gaps: number[] = [];
+    for (let i = 1; i < points.length; i++) gaps.push(points[i].t - points[i - 1].t);
+    const ordered = [...gaps].sort((a, b) => a - b);
+    const medianGap = ordered[Math.floor(ordered.length / 2)] ?? 0;
+    const breakAfter = medianGap > 0 ? medianGap * GAP_FACTOR : Infinity;
+
+    const runs: number[][] = [];
+    let run: number[] = [];
+    for (let i = 0; i < points.length; i++) {
+      if (i > 0 && points[i].t - points[i - 1].t > breakAfter) {
+        runs.push(run);
+        run = [];
+      }
+      run.push(i);
+    }
+    runs.push(run);
+
+    const trace = (indices: number[]) =>
+      indices
+        .map(
+          (i, k) =>
+            `${k ? "L" : "M"} ${x(i).toFixed(2)} ${y(points[i].risk).toFixed(2)}`
+        )
+        .join(" ");
+
+    const baseline = PAD.top + innerH;
+
+    const line = runs
+      .map((indices) => {
+        const path = trace(indices);
+        // A run of one would draw nothing. Repeating the point gives a
+        // zero-length segment, which the round linecap renders as a dot — so
+        // an isolated reading between two outages is still visible.
+        return indices.length === 1
+          ? `${path} L ${x(indices[0]).toFixed(2)} ${y(points[indices[0]].risk).toFixed(2)}`
+          : path;
+      })
       .join(" ");
 
-    const area = `${line} L ${x(points.length - 1).toFixed(2)} ${(
-      PAD.top + innerH
-    ).toFixed(2)} L ${x(0).toFixed(2)} ${(PAD.top + innerH).toFixed(2)} Z`;
+    const area = runs
+      .filter((indices) => indices.length > 1)
+      .map(
+        (indices) =>
+          `${trace(indices)} L ${x(indices[indices.length - 1]).toFixed(2)} ` +
+          `${baseline.toFixed(2)} L ${x(indices[0]).toFixed(2)} ` +
+          `${baseline.toFixed(2)} Z`
+      )
+      .join(" ");
 
     const ticks = [0, 0.5, 1].map((f) => ({
       y: PAD.top + f * innerH,
@@ -136,6 +191,9 @@ export function TrendChart({
     );
   }
 
+  // `locate` is a hoisted declaration, so it cannot see the null check above.
+  const chart = model;
+
   const index = hover ?? points.length - 1;
   const active = points[index];
   const band = riskBand(active.risk);
@@ -147,11 +205,23 @@ export function TrendChart({
   function locate(clientX: number) {
     const rect = svgNode.current?.getBoundingClientRect();
     if (!rect) return;
+
     // The viewBox is the element's own pixel box, so a client offset is
-    // already a chart coordinate — no ratio conversion to drift out of sync.
-    const innerW = W - PAD.left - PAD.right;
-    const i = Math.round(((clientX - rect.left - PAD.left) / innerW) * (points.length - 1));
-    setHover(Math.max(0, Math.min(points.length - 1, i)));
+    // already a chart coordinate. Points are no longer evenly spaced, so
+    // pick the nearest one rather than computing an index from the offset.
+    const target = clientX - rect.left;
+    let nearest = 0;
+    let best = Infinity;
+
+    for (let i = 0; i < points.length; i++) {
+      const distance = Math.abs(chart.x(i) - target);
+      if (distance < best) {
+        best = distance;
+        nearest = i;
+      }
+    }
+
+    setHover(nearest);
   }
 
   /** Keyboard scrubbing. Up/down stay unbound — the page uses them to move
@@ -348,9 +418,14 @@ export function TrendChart({
         />
       </svg>
 
+      {/* Three labels rather than two: the axis is proportional to time now,
+          so a midpoint is a real reading instead of decoration. */}
       <div className="mt-1 flex justify-between px-3">
         <span className="numeric text-[10px] text-tertiary">
           {clockTime(points[0].t)}
+        </span>
+        <span className="numeric text-[10px] text-tertiary">
+          {clockTime((points[0].t + points[points.length - 1].t) / 2)}
         </span>
         <span className="numeric text-[10px] text-tertiary">
           {clockTime(points[points.length - 1].t)}
