@@ -35,7 +35,15 @@ before(async () => {
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 });
 
-after(() => server.close());
+after(async () => {
+  // fetch() keeps sockets alive, and server.close() only stops NEW
+  // connections — so an un-awaited close left the process holding open
+  // handles at teardown. That surfaced on CI as the test runner failing the
+  // whole file with "Unable to deserialize cloned data", which looks like a
+  // broken test and is really a process that would not shut down.
+  server.closeAllConnections?.();
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+});
 
 function add(key?: string) {
   return fetch(`${base}/wallet/add`, {
