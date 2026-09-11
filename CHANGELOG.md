@@ -58,6 +58,17 @@ rather than inside it, and a cache younger than the refresh interval is used
 without a request, so restarts score immediately and the first run shows
 prices and stress while the series load.
 
+### What if you sold some of it
+
+`GET /whatif?wallet=&from=&fraction=&to=` re-scores a wallet's current book
+with a share of one position moved into another asset at the last tick's
+prices — the same series and arithmetic as the live score, on a
+hypothetical shape, with value preserved. The attribution panel offers it
+as one click: a quarter, a half or all of any held asset into USDC, with
+score, VaR, effective assets and largest position before and after. The
+tick and the what-if share one scoring function, so the two can never
+disagree.
+
 ### The correlation behind the model
 
 `/overview` carries the EWMA correlation matrix of the volatile assets on
@@ -69,6 +80,7 @@ selected wallet's holdings foregrounded and its most correlated pair named.
 - `GET /onchain` — program id, cluster, reporter, cadence, last error
 - `GET /snapshots?wallet=&all=` — read back from the chain, `trusted` per row
 - `GET /preferences?wallet=` — an owner's threshold and named reporter
+- `GET /whatif?wallet=&from=&fraction=&to=` — re-score a moved book
 - `/health` and `/overview` carry an `onchain` summary; each wallet lists
   its `anchors`
 - `npm run init` is a pre-flight (deployment, funding, rent budget);

@@ -23,7 +23,7 @@ Every 30 seconds, for every monitored wallet:
 |:--|:--|
 | Price | Real SOL + SPL balances from mainnet across ten assets, valued at live quotes |
 | Model | 95% one-day **Value at Risk** and **Expected Shortfall** from an EWMA covariance of 30 days of returns — parametric and historical, the more conservative one headlines |
-| Attribute | Euler allocation splits the VaR across assets: "BONK is 11% of value and 29% of risk" |
+| Attribute | Euler allocation splits the VaR across assets: "BONK is 11% of value and 29% of risk" — and **what-if** re-scores the book with a share of any position sold into USDC |
 | Score | VaR + concentration + market stress + trend → one number, 0–100, with the breakdown always visible |
 | Act | Telegram alert above threshold; **on-chain snapshot** hourly and on every band crossing |
 
@@ -86,7 +86,7 @@ solana account <snapshot pda> --url devnet          # or skip the engine
 
 ## Numbers
 
-- 191 tests: 128 engine, 43 dashboard, 20 program (local validator, also in CI)
+- 198 tests: 135 engine, 43 dashboard, 20 program (local validator, also in CI)
 - 10 assets priced; 5 program instructions; 1 event
 - Dashboard: static export, hand-rolled SVG, no charting dependency,
   keyboard-first, light and dark, screen-reader announcements
@@ -96,8 +96,8 @@ solana account <snapshot pda> --url devnet          # or skip the engine
 - Mainnet deployment of the program (one `anchor deploy`; the engine reads
   mainnet already)
 - A reporter registry so owners can pick from known engines
-- Per-position "what if I sold this" using the marginal VaR the model already
-  computes
+- Free-form what-ifs: any target asset, partial rebalances across several
+  positions at once
 - More assets, gated by the price feed's budget
 
 ## Links

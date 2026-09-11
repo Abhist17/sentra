@@ -289,6 +289,34 @@ test("/snapshots requires a wallet parameter", async () => {
   assert.equal(res.status, 400);
 });
 
+test("/whatif validates its inputs before touching the book", async () => {
+  assert.equal((await get("/whatif")).status, 400);
+  assert.equal((await get(`/whatif?wallet=${VALID}`)).status, 400);
+  assert.equal(
+    (await get(`/whatif?wallet=${VALID}&from=SOL&fraction=2`)).status,
+    400
+  );
+  assert.equal(
+    (await get(`/whatif?wallet=${VALID}&from=SOL&fraction=abc`)).status,
+    400
+  );
+  // A valid request for a wallet nobody monitors.
+  assert.equal(
+    (await get(`/whatif?wallet=${VALID}&from=SOL&fraction=0.5`)).status,
+    404
+  );
+});
+
+test("/whatif says when a monitored wallet has nothing to evaluate", async () => {
+  // The demo wallet is monitored but the engine never ticks in these tests,
+  // so it has no scored book — a 409, not a 500 and not a made-up answer.
+  const demo = (await (await get("/wallets")).json()).wallets[0].address;
+  const res = await get(`/whatif?wallet=${demo}&from=SOL&fraction=0.5`);
+  assert.equal(res.status, 409);
+  const body = await res.json();
+  assert.ok(body.error);
+});
+
 test("/preferences validates the address and requires one", async () => {
   assert.equal((await get("/preferences")).status, 400);
 

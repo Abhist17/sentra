@@ -128,6 +128,18 @@ It also reports a **diversification ratio**: weighted average standalone
 volatility over portfolio volatility. At 1.0 the holdings move as one and
 spreading across tickers is buying nothing.
 
+### What if you sold some of it
+
+Attribution says where the risk is; the step after is what moving some of
+it would do. Pick a position and a share — a quarter, a half, all — and the
+engine re-scores the actual book with that much moved into USDC at the last
+tick's prices: same series, same arithmetic, the score the dashboard would
+show next tick if the trade had happened. Value is preserved in the move;
+selling de-risks a book, it does not shrink it. On a $1.37B whale wallet
+that is 68% SOL, selling half the SOL takes the score from 23 to 7 and the
+one-day VaR from $55M to $30M — with the effective asset count going from
+1.9 to 3.3, which is the number that explains why.
+
 ### Why the ratio is what it is
 
 The dashboard shows the **correlation matrix** behind the covariance — the
@@ -406,8 +418,12 @@ Built as a working instrument rather than a landing page.
 - **The on-chain record links out, not in.** Each anchored reading is a row
   with the score, the book, the VaR, and links to the transaction and account
   on Solana Explorer. The panel names the program and reporter to verify
-  against rather than asking to be believed. Anchored points are marked on the
-  trend chart.
+  against rather than asking to be believed — and **Read the chain** replaces
+  the engine's list with an account scan, optionally from every reporter that
+  has ever scored the wallet. Anchored points are marked on the trend chart.
+- **What-if is the live model, not a rule of thumb.** Sell a share of a
+  position into USDC and the engine re-scores the book: score, VaR,
+  effective assets and largest position, before and after.
 - **Keyboard-first.** `j`/`k` or arrows move between wallets, `/` adds one. The
   trend chart takes focus too — left/right step through the series, home/end
   jump to either end.
@@ -598,6 +614,7 @@ The engine is a plain REST service — the dashboard is only one possible client
 | `GET` | `/onchain` | Program id, cluster, reporter key, anchoring cadence, last error |
 | `GET` | `/snapshots?wallet=&all=` | On-chain snapshots read back from the chain; `all=1` includes other reporters |
 | `GET` | `/preferences?wallet=` | A wallet owner's on-chain threshold and named reporter |
+| `GET` | `/whatif?wallet=&from=&fraction=&to=` | Re-scores the book with a share of one position moved into another asset |
 | `GET` | `/risk` | Value-weighted risk across all wallets |
 | `GET` | `/portfolio` | Total exposure and aggregate VaR |
 | `GET` | `/prices` · `/market` | Live quotes, per-tick changes, stress signals, correlation |
@@ -640,7 +657,7 @@ anchor test              # program integration tests on a local validator
 
 ### Tests
 
-191 tests. The 171 off-chain ones need no network; the 20 program tests run
+198 tests. The 178 off-chain ones need no network; the 20 program tests run
 against a local validator that `anchor test` starts for you — and that CI
 starts too, whenever the program or its tests change.
 
@@ -650,7 +667,8 @@ starts too, whenever the program or its tests change.
 | Market signals | 19 | Drops, volatility window, correlated drawdowns that scale with the universe, stress bands |
 | On-chain, off-chain | 16 | PDA seeds byte for byte, cluster naming, anchoring policy with hysteresis, the anchor store |
 | Asset table | 6 | Unique ids and mints, canonical keys, derived tables agree with the source |
-| HTTP API | 28 | Routing, validation, error mapping, API key, rate limiting, CORS, readiness, on-chain routes |
+| HTTP API | 30 | Routing, validation, error mapping, API key, rate limiting, CORS, readiness, on-chain and what-if routes |
+| What-if | 5 | Identity on an unchanged book, value preserved, de-risking lowers VaR, concentrating raises the penalty, nonsense refused |
 | Wallet registry | 7 | Address validation, limits, persistence |
 | Store | 8 | History ring buffer, and what a restart is allowed to reinstate |
 | Frontend | 43 | Formatting across eight orders of magnitude, risk bands, engine status, engine-URL resolution, explorer links, asset slots |

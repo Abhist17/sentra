@@ -2,6 +2,7 @@ import {
   fetchLivePrices,
   fetchAllHistories,
   inferIntervalMs,
+  isAssetSymbol,
   ASSET_SYMBOLS,
   STABLE_ASSETS,
   type AssetSymbol,
@@ -31,6 +32,8 @@ import {
 import {
   updateMetrics,
   updateMarket,
+  getMarket,
+  getWalletMetrics,
   recordAnchor,
   seedAnchors,
   hasAnchors,
@@ -430,6 +433,199 @@ let returnsBySymbol: Record<string, number[]> = {};
  * one-hour figure labelled as daily.
  */
 let periodsPerDay = 0;
+
+/** Tests need a return series without a network. */
+export function setHistoryForTests(
+  returns: Record<string, number[]>,
+  perDay: number
+): void {
+  returnsBySymbol = returns;
+  periodsPerDay = perDay;
+}
+
+// ─────────────────────────────────────────────
+// 7. SCORING A BOOK
+// One function turns priced holdings into the blended score, used by the
+// tick for the real book and by the what-if route for a hypothetical one —
+// so a what-if answer is the same arithmetic as the live number, not an
+// approximation of it.
+// ─────────────────────────────────────────────
+
+export interface ScoredBook {
+  hybridRisk: number;
+  risk: ReturnType<typeof calculatePortfolioRisk>;
+  concentration: ReturnType<typeof concentrationPenalty>;
+  breakdown: {
+    var: number;
+    concentration: number;
+    stress: number;
+    trend: number;
+  };
+}
+
+export function scoreBook(
+  holdings: AssetHolding[],
+  portfolioValue: number,
+  stressScore: number,
+  history: { returns: Record<string, number[]>; perDay: number } = {
+    returns: returnsBySymbol,
+    perDay: periodsPerDay,
+  }
+): ScoredBook {
+  // Aligned by symbol, so a missing history series drops that asset's
+  // weight instead of shifting every other asset's returns.
+  const weightsBySymbol = Object.fromEntries(
+    holdings.filter((h) => h.weight > 0).map((h) => [h.symbol, h.weight])
+  );
+
+  const risk = calculatePortfolioRisk({
+    portfolioValue,
+    weightsBySymbol,
+    returnsBySymbol: history.returns,
+    periodsPerDay: history.perDay,
+    horizonDays: CONFIG.VAR_HORIZON_DAYS,
+    confidence: CONFIG.VAR_CONFIDENCE,
+    lambda: CONFIG.VAR_LAMBDA,
+  });
+
+  const concentration = concentrationPenalty(holdings.map((h) => h.weight));
+
+  // Short-term trend from the live window of the largest holding.
+  const heaviest = holdings.reduce((a, b) => (a.weight > b.weight ? a : b));
+  const recentReturns = liveReturns(heaviest.symbol).slice(-5);
+  const trendPenalty =
+    recentReturns.length >= 2 && recentReturns.reduce((a, b) => a + b, 0) < 0
+      ? 5
+      : 0;
+
+  // Stress 0–100 contributes 0–25 points. The legacy flat +15 shock penalty
+  // was dropped: a shock already drives the stress score to 40+, so adding
+  // both counted the same event twice.
+  const stressContribution = (stressScore / 100) * 25;
+
+  const hybridRisk = Math.max(
+    0,
+    Math.min(
+      100,
+      risk.riskScore + concentration.penalty + trendPenalty + stressContribution
+    )
+  );
+
+  return {
+    hybridRisk,
+    risk,
+    concentration,
+    breakdown: {
+      var: risk.riskScore,
+      concentration: concentration.penalty,
+      stress: stressContribution,
+      trend: trendPenalty,
+    },
+  };
+}
+
+/** What a what-if reports for each side of the change. */
+export interface BookSummary {
+  risk: number;
+  varUsd: number;
+  esUsd: number;
+  breakdown: ScoredBook["breakdown"];
+  effectiveAssets: number;
+  maxWeight: number;
+  diversificationRatio: number;
+  holdings: { symbol: string; value: number; weight: number }[];
+}
+
+export interface WhatIfResult {
+  wallet: string;
+  /** Position moved, as a share of it, into `to`. */
+  from: string;
+  to: string;
+  fraction: number;
+  movedUsd: number;
+  before: BookSummary;
+  after: BookSummary;
+}
+
+function summarise(
+  holdings: AssetHolding[],
+  portfolioValue: number,
+  scored: ScoredBook
+): BookSummary {
+  return {
+    risk: scored.hybridRisk,
+    varUsd: scored.risk.headlineVarUsd,
+    esUsd: scored.risk.headlineEsUsd,
+    breakdown: scored.breakdown,
+    effectiveAssets: scored.concentration.effectiveAssets,
+    maxWeight: scored.concentration.maxWeight,
+    diversificationRatio: scored.risk.diversificationRatio,
+    holdings: holdings
+      .filter((h) => h.value > 0)
+      .map((h) => ({ symbol: h.symbol, value: h.value, weight: h.weight }))
+      .sort((a, b) => b.value - a.value),
+  };
+}
+
+/**
+ * Re-scores a wallet's current book with `fraction` of one position moved
+ * into another asset, as if sold at the last tick's prices. Value is
+ * preserved — selling de-risks a book, it does not shrink it — so the only
+ * thing that changes is the shape, which is the only thing the reader can
+ * change.
+ *
+ * Uses the same series, stress and arithmetic as the live score, so the
+ * "after" number is what the dashboard would show next tick if the trade
+ * had happened. Returns null when the wallet has not been scored yet.
+ */
+export function whatIf(
+  address: string,
+  from: string,
+  fraction: number,
+  to = "USDC"
+): WhatIfResult | null {
+  const current = getWalletMetrics(address);
+  if (!current || current.portfolio <= 0) return null;
+  if (!isAssetSymbol(from) || !isAssetSymbol(to) || from === to) return null;
+  if (!(fraction >= 0 && fraction <= 1)) return null;
+
+  const source = current.holdings.find((h) => h.symbol === from);
+  if (!source || source.value <= 0) return null;
+
+  const movedUsd = source.value * fraction;
+  const prices = getMarket().prices;
+  const toPrice = prices?.[to as AssetSymbol] ?? 0;
+
+  const after: AssetHolding[] = current.holdings.map((h) => ({ ...h }));
+  const src = after.find((h) => h.symbol === from)!;
+  src.value -= movedUsd;
+  src.amount = src.price > 0 ? src.value / src.price : 0;
+
+  let dest = after.find((h) => h.symbol === to);
+  if (!dest) {
+    dest = { symbol: to, amount: 0, price: toPrice, value: 0, weight: 0 };
+    after.push(dest);
+  }
+  dest.value += movedUsd;
+  dest.amount = dest.price > 0 ? dest.value / dest.price : 0;
+
+  const total = after.reduce((sum, h) => sum + h.value, 0);
+  for (const h of after) h.weight = total > 0 ? h.value / total : 0;
+
+  const stress = getMarket().stress.score;
+  const scoredBefore = scoreBook(current.holdings, current.portfolio, stress);
+  const scoredAfter = scoreBook(after, total, stress);
+
+  return {
+    wallet: address,
+    from,
+    to,
+    fraction,
+    movedUsd,
+    before: summarise(current.holdings, current.portfolio, scoredBefore),
+    after: summarise(after, total, scoredAfter),
+  };
+}
 let lastHistoryFetch = 0;
 const prevPrices: Partial<PriceMap> = {};
 const lastAlertTime = new Map<string, number>();
@@ -704,23 +900,13 @@ async function runTick() {
 
       for (const h of holdings) h.weight = h.value / portfolioValue;
 
-      /* 6b. VaR — aligned by symbol, so a missing history series drops that
-             asset's weight instead of shifting every other asset's returns. */
-      const weightsBySymbol = Object.fromEntries(
-        holdings.filter((h) => h.weight > 0).map((h) => [h.symbol, h.weight])
-      );
-
-      const risk = calculatePortfolioRisk({
-        portfolioValue,
-        weightsBySymbol,
-        returnsBySymbol,
-        periodsPerDay,
-        horizonDays: CONFIG.VAR_HORIZON_DAYS,
-        confidence: CONFIG.VAR_CONFIDENCE,
-        lambda: CONFIG.VAR_LAMBDA,
-      });
-
+      /* 6b. SCORE — VaR, concentration, trend and stress, blended. */
+      const scored = scoreBook(holdings, portfolioValue, marketStress.score);
+      const { risk, concentration, hybridRisk } = scored;
       const { riskScore: varRisk, coverage, uncovered } = risk;
+      const { penalty: concentrationRisk, maxWeight } = concentration;
+      const { trend: trendPenalty, stress: stressContribution } =
+        scored.breakdown;
 
       if (uncovered.length) {
         console.log(
@@ -728,32 +914,6 @@ async function runTick() {
             `(${(coverage * 100).toFixed(1)}% of value covered)`
         );
       }
-
-      /* 6c. HYBRID RISK — portfolio risk plus market context */
-      const concentration = concentrationPenalty(holdings.map((h) => h.weight));
-      const { penalty: concentrationRisk, maxWeight } = concentration;
-
-      // Short-term trend from the live window of the largest holding.
-      const heaviest = holdings.reduce((a, b) => (a.weight > b.weight ? a : b));
-      const recentReturns = liveReturns(heaviest.symbol).slice(-5);
-      const trendPenalty =
-        recentReturns.length >= 2 &&
-        recentReturns.reduce((a, b) => a + b, 0) < 0
-          ? 5
-          : 0;
-
-      // Stress 0–100 contributes 0–25 points. The legacy flat +15 shock
-      // penalty was dropped: a shock already drives the stress score to 40+,
-      // so adding both counted the same event twice.
-      const stressContribution = (marketStress.score / 100) * 25;
-
-      const hybridRisk = Math.max(
-        0,
-        Math.min(
-          100,
-          varRisk + concentrationRisk + trendPenalty + stressContribution
-        )
-      );
 
       // The wallet list is snapshotted at the top of this loop, but each
       // iteration awaits RPC calls — so a DELETE can land mid-tick. Without

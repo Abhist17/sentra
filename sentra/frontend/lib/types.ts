@@ -171,3 +171,25 @@ export interface Snapshot {
   /** Written by the engine's own reporter key. */
   trusted: boolean;
 }
+
+/** One side of a what-if: the book as scored. */
+export interface BookSummary {
+  risk: number;
+  varUsd: number;
+  esUsd: number;
+  breakdown: WalletMetrics["breakdown"];
+  effectiveAssets: number;
+  maxWeight: number;
+  diversificationRatio: number;
+  holdings: { symbol: string; value: number; weight: number }[];
+}
+
+export interface WhatIfResult {
+  wallet: string;
+  from: string;
+  to: string;
+  fraction: number;
+  movedUsd: number;
+  before: BookSummary;
+  after: BookSummary;
+}

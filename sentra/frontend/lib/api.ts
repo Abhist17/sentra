@@ -1,4 +1,4 @@
-import type { Overview, Snapshot } from "./types";
+import type { Overview, Snapshot, WhatIfResult } from "./types";
 
 /** Build-time default. Overridable at runtime — see resolveApiUrl(). */
 export const DEFAULT_API_URL = (
@@ -196,3 +196,15 @@ export const removeWallet = (address: string) =>
 
 export const sendTestAlert = () =>
   request<{ success: boolean }>("/test/alert", { method: "POST" });
+
+export const getWhatIf = (
+  wallet: string,
+  from: string,
+  fraction: number,
+  to = "USDC"
+) =>
+  request<WhatIfResult>(
+    `/whatif?wallet=${encodeURIComponent(wallet)}&from=${encodeURIComponent(
+      from
+    )}&fraction=${fraction}&to=${encodeURIComponent(to)}`
+  );

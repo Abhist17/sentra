@@ -13,10 +13,21 @@ import { EmptyState } from "./ui";
  * sum exactly to portfolio VaR (Euler allocation), so the split is an
  * attribution rather than a heuristic.
  */
-export function RiskAttribution({ metrics }: { metrics: WalletMetrics }) {
-  const contributions = metrics.model.contributions ?? [];
+/**
+ * Below this share of both value and risk a position is dust — a few
+ * dollars left in a token account — and a row for it says nothing except
+ * that it exists. Folded into one line so the panel stays about the book.
+ */
+const DUST = 0.001;
 
-  if (contributions.length === 0) {
+export function RiskAttribution({ metrics }: { metrics: WalletMetrics }) {
+  const all = metrics.model.contributions ?? [];
+  const contributions = all.filter(
+    (c) => c.weight >= DUST || c.riskShare >= DUST
+  );
+  const dust = all.length - contributions.length;
+
+  if (all.length === 0) {
     return (
       <EmptyState
         title="No attribution yet"
@@ -92,6 +103,13 @@ export function RiskAttribution({ metrics }: { metrics: WalletMetrics }) {
         })}
       </div>
 
+      {dust > 0 && (
+        <p className="mt-2 text-[10px] leading-snug text-tertiary">
+          {dust} position{dust === 1 ? "" : "s"} under 0.1% of value and of
+          risk not shown.
+        </p>
+      )}
+
       <div className="mt-4 space-y-1.5 border-t border-border pt-3">
         <div className="flex items-baseline justify-between">
           <span className="label">Diversification</span>
@@ -108,7 +126,7 @@ export function RiskAttribution({ metrics }: { metrics: WalletMetrics }) {
                 (1 - 1 / dr) *
                 100
               ).toFixed(0)}% versus holding them in isolation.`
-            : `Holdings move almost as one — spreading across ${contributions.length} tickers is buying little. ${top.symbol} drives ${(
+            : `Holdings move almost as one — spreading across ${all.length} tickers is buying little. ${top.symbol} drives ${(
                 top.riskShare * 100
               ).toFixed(0)}% of the risk.`}
         </p>

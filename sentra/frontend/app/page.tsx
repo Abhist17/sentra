@@ -13,6 +13,7 @@ import { TrendChart } from "@/components/TrendChart";
 import { HoldingsTable } from "@/components/HoldingsTable";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { RiskAttribution } from "@/components/RiskAttribution";
+import { WhatIf } from "@/components/WhatIf";
 import { OnChainPanel } from "@/components/OnChainPanel";
 import { CorrelationGrid } from "@/components/CorrelationGrid";
 import { WalletList } from "@/components/WalletList";
@@ -319,7 +320,16 @@ export default function Dashboard() {
                     meta="value vs risk"
                   />
                   {active?.metrics ? (
-                    <RiskAttribution metrics={active.metrics} />
+                    <>
+                      <RiskAttribution metrics={active.metrics} />
+                      <div className="px-4 pb-3.5">
+                        <WhatIf
+                          wallet={active.address}
+                          metrics={active.metrics}
+                          demo={demo}
+                        />
+                      </div>
+                    </>
                   ) : (
                     <EmptyState
                       title="Nothing scored yet"

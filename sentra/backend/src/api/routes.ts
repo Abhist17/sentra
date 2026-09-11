@@ -34,6 +34,7 @@ import {
   forgetWallet,
 } from "../store/metrics.store";
 import { ASSET_SYMBOLS } from "../services/price.service";
+import { whatIf } from "../engine/risk.engine";
 
 /**
  * Guards routes that mutate state or spend resources (wallet registry writes,
@@ -322,6 +323,44 @@ export function registerRoutes(app: Express) {
       wallet: address,
       points: getRiskHistory(address),
     });
+  });
+
+  /* =============================
+     GET /whatif?wallet=&from=&fraction=&to=
+     Re-scores the wallet's current book with a share of one position moved
+     into another asset. Read-only and instant: the same series and
+     arithmetic as the live score, on a hypothetical shape.
+  ============================= */
+  app.get("/whatif", (req, res) => {
+    const address = req.query.wallet as string | undefined;
+    const from = req.query.from as string | undefined;
+    const to = (req.query.to as string | undefined) || "USDC";
+    const fraction = Number(req.query.fraction);
+
+    if (!address || !from) {
+      res.status(400).json({ error: "wallet and from are required" });
+      return;
+    }
+    if (!Number.isFinite(fraction) || fraction < 0 || fraction > 1) {
+      res.status(400).json({ error: "fraction must be between 0 and 1" });
+      return;
+    }
+    if (!hasWallet(address)) {
+      res.status(404).json({ error: "Wallet is not monitored" });
+      return;
+    }
+
+    const result = whatIf(address, from.toUpperCase(), fraction, to.toUpperCase());
+    if (!result) {
+      res.status(409).json({
+        error:
+          "Cannot evaluate: the wallet has no scored book yet, does not hold " +
+          "that asset, or the assets are not ones the engine prices",
+      });
+      return;
+    }
+
+    res.json(result);
   });
 
   /* =============================
