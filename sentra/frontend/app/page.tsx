@@ -362,10 +362,10 @@ export default function Dashboard() {
               color={config.telegram ? "var(--calm)" : "var(--text-tertiary)"}
             />
             <Row
-              label="On-chain writes"
-              value={config.onchainWrites ? "on" : "off"}
+              label="On-chain anchoring"
+              value={config.onchain.enabled ? "on" : "off"}
               color={
-                config.onchainWrites ? "var(--calm)" : "var(--text-tertiary)"
+                config.onchain.enabled ? "var(--calm)" : "var(--text-tertiary)"
               }
             />
           </dl>

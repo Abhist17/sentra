@@ -70,6 +70,9 @@ async function rpcWithRetry<T>(
  */
 let cachedKeypair: anchor.web3.Keypair | null = null;
 
+/** True once a configured keypair (not an ephemeral stand-in) is loaded. */
+let signerConfigured = false;
+
 export function loadKeypair(): anchor.web3.Keypair {
   if (cachedKeypair) return cachedKeypair;
 
@@ -82,6 +85,7 @@ export function loadKeypair(): anchor.web3.Keypair {
         : anchor.utils.bytes.bs58.decode(inline);
 
       cachedKeypair = anchor.web3.Keypair.fromSecretKey(bytes);
+      signerConfigured = true;
       return cachedKeypair;
     } catch (err) {
       throw new Error(
@@ -106,6 +110,7 @@ export function loadKeypair(): anchor.web3.Keypair {
   cachedKeypair = anchor.web3.Keypair.fromSecretKey(
     new Uint8Array(JSON.parse(fs.readFileSync(keypairPath, "utf-8")))
   );
+  signerConfigured = true;
 
   return cachedKeypair;
 }
@@ -236,70 +241,187 @@ export async function fetchWalletPortfolio(
 }
 
 // ── Program PDAs & instructions ──────────────────────────────────
+//
+// v2 of the program separates two roles. The REPORTER — this engine's signing
+// key — anchors a score for any wallet and pays the rent. The wallet's OWNER
+// may register a preference naming the reporter they trust. Nothing here
+// requires the scored wallet to sign anything.
 
-export function derivePreferencePda(user: PublicKey, programId: PublicKey) {
+/** Cluster the snapshots are written to, named for explorer links. */
+export type ClusterName =
+  | "mainnet-beta"
+  | "devnet"
+  | "testnet"
+  | "localnet"
+  | "custom";
+
+export function clusterFromRpcUrl(url: string): ClusterName {
+  const lower = url.toLowerCase();
+  if (/localhost|127\.0\.0\.1|0\.0\.0\.0/.test(lower)) return "localnet";
+  if (lower.includes("devnet")) return "devnet";
+  if (lower.includes("testnet")) return "testnet";
+  if (lower.includes("mainnet")) return "mainnet-beta";
+  return "custom";
+}
+
+export function getProgramId(): PublicKey {
+  return new PublicKey((IDL as { address: string }).address);
+}
+
+/**
+ * The key that signs snapshots, or null when the engine is running with an
+ * ephemeral stand-in — in which case nothing is being anchored and the API
+ * should not present a reporter for anyone to verify against.
+ */
+export function getReporterPublicKey(): PublicKey | null {
+  if (!signerConfigured) {
+    // Loading is lazy; a read-only deployment may never have tried.
+    try {
+      loadKeypair();
+    } catch {
+      return null;
+    }
+  }
+  return cachedKeypair?.publicKey ?? null;
+}
+
+export function derivePreferencePda(owner: PublicKey, programId: PublicKey) {
   return PublicKey.findProgramAddressSync(
-    [Buffer.from("risk_preference"), user.toBuffer()],
+    [Buffer.from("risk_preference"), owner.toBuffer()],
     programId
   );
 }
 
 export function deriveSnapshotPda(
-  user: PublicKey,
+  reporter: PublicKey,
+  wallet: PublicKey,
   timestampBN: anchor.BN,
   programId: PublicKey
 ) {
   return PublicKey.findProgramAddressSync(
     [
       Buffer.from("risk_snapshot"),
-      user.toBuffer(),
+      reporter.toBuffer(),
+      wallet.toBuffer(),
       timestampBN.toArrayLike(Buffer, "le", 8),
     ],
     programId
   );
 }
 
-export async function ensurePreferenceInitialized(
+export interface Preference {
+  owner: string;
+  threshold: number;
+  reporter: string;
+  updatedAt: number;
+}
+
+export async function fetchPreference(
   program: anchor.Program,
-  user: PublicKey,
-  defaultThreshold = 50
-) {
-  const [preferencePda] = derivePreferencePda(user, program.programId);
-
-  const existing = await program.provider.connection.getAccountInfo(
-    preferencePda
+  owner: PublicKey
+): Promise<Preference | null> {
+  const [pda] = derivePreferencePda(owner, program.programId);
+  const account = await (program as any).account.riskPreference.fetchNullable(
+    pda
   );
-  if (existing) return;
+  if (!account) return null;
 
-  console.log("Initializing preference PDA for", user.toBase58());
-  await program.methods
-    .initializePreferences(defaultThreshold)
-    .accounts({
-      preference: preferencePda,
-      user,
-      systemProgram: anchor.web3.SystemProgram.programId,
-    })
-    .rpc();
-  console.log("✅ Preference PDA initialized");
+  return {
+    owner: account.owner.toBase58(),
+    threshold: account.threshold,
+    reporter: account.reporter.toBase58(),
+    updatedAt: account.updatedAt.toNumber(),
+  };
+}
+
+/**
+ * Creates or updates the provider wallet's own preference. This is the
+ * owner-side instruction — run by a wallet holder from their own keypair,
+ * not by the engine.
+ */
+export async function setPreferences(
+  program: anchor.Program,
+  threshold: number,
+  reporter: PublicKey
+): Promise<string> {
+  const owner = program.provider.publicKey!;
+  const existing = await fetchPreference(program, owner);
+
+  const method = existing
+    ? program.methods.updatePreferences(threshold, reporter)
+    : program.methods.initializePreferences(threshold, reporter);
+
+  return method.accounts({ owner }).rpc();
+}
+
+/**
+ * Whether `wallet` has registered a preference that names OUR key. Only then
+ * may the preference be passed to record_risk_score — passing it as any other
+ * reporter fails with UnauthorizedReporter, and passing a non-existent
+ * account fails outright. Cached: this is one RPC call per wallet, and an
+ * owner changing their preference is a rare event.
+ */
+const PREFERENCE_TTL = 60 * 60 * 1000;
+const preferenceCache = new Map<string, { usable: boolean; checkedAt: number }>();
+
+async function preferenceUsableFor(
+  program: anchor.Program,
+  wallet: PublicKey,
+  reporter: PublicKey
+): Promise<boolean> {
+  const key = wallet.toBase58();
+  const cached = preferenceCache.get(key);
+  if (cached && Date.now() - cached.checkedAt < PREFERENCE_TTL) {
+    return cached.usable;
+  }
+
+  let usable = false;
+  try {
+    const preference = await fetchPreference(program, wallet);
+    usable = preference !== null && preference.reporter === reporter.toBase58();
+  } catch (err) {
+    console.warn(
+      `⚠️  Could not read preference for ${key.slice(0, 8)}…:`,
+      err instanceof Error ? err.message : err
+    );
+  }
+
+  preferenceCache.set(key, { usable, checkedAt: Date.now() });
+  return usable;
+}
+
+/** One anchored reading, as the engine knows it the moment it lands. */
+export interface AnchorRecord {
+  wallet: string;
+  reporter: string;
+  riskScore: number;
+  /** Unix seconds, as stored on-chain. */
+  timestamp: number;
+  /** Snapshot account address. */
+  pda: string;
+  /** Transaction signature, for an explorer link. */
+  signature: string;
+  /** True when the owner's preference was consulted and the score met it. */
+  breached: boolean;
 }
 
 export async function recordRiskScoreOnChain(
   program: anchor.Program,
-  user: PublicKey,
+  wallet: PublicKey,
   riskScore: number
-) {
+): Promise<AnchorRecord | null> {
+  const reporter = program.provider.publicKey!;
+
   // The program rejects anything above 100 — clamp here so a runaway blended
   // score surfaces as a capped snapshot rather than a failed transaction.
   const score = Math.max(0, Math.min(100, Math.round(riskScore)));
 
-  await ensurePreferenceInitialized(program, user);
-
   const timestamp = Math.floor(Date.now() / 1000);
   const timestampBN = new anchor.BN(timestamp);
 
-  const [preferencePda] = derivePreferencePda(user, program.programId);
   const [snapshotPda] = deriveSnapshotPda(
-    user,
+    reporter,
+    wallet,
     timestampBN,
     program.programId
   );
@@ -311,44 +433,98 @@ export async function recordRiskScoreOnChain(
   );
   if (existing) {
     console.log(`⏭️  Snapshot for ${timestamp} already exists, skipping`);
-    return;
+    return null;
   }
 
-  await program.methods
-    .recordRiskScore(score, timestampBN)
-    .accounts({
-      preference: preferencePda,
-      snapshot: snapshotPda,
-      user,
-      systemProgram: anchor.web3.SystemProgram.programId,
-    })
+  const withPreference = await preferenceUsableFor(program, wallet, reporter);
+  const [preferencePda] = derivePreferencePda(wallet, program.programId);
+
+  // `null` is how Anchor's client spells "no account" for an optional — it
+  // substitutes the program id, which the program reads as None. The untyped
+  // Program's signature predates optional accounts and refuses null, though
+  // the resolver handles it; the typed client used in the Anchor tests
+  // accepts it directly.
+  const accounts = {
+    snapshot: snapshotPda,
+    preference: withPreference ? preferencePda : null,
+    reporter,
+  } as unknown as Record<string, PublicKey>;
+
+  const signature = await program.methods
+    .recordRiskScore(wallet, score, timestampBN)
+    .accountsPartial(accounts)
     .rpc();
 
+  let breached = false;
+  if (withPreference) {
+    const preference = await fetchPreference(program, wallet).catch(() => null);
+    breached = preference !== null && score >= preference.threshold;
+  }
+
   console.log(
-    `✅ Risk score ${score} recorded on-chain for ${user
-      .toBase58()
-      .slice(0, 8)}...`
+    `⛓️  Anchored ${score} for ${wallet.toBase58().slice(0, 8)}… ` +
+      `(${signature.slice(0, 8)}…)` +
+      (breached ? " — BREACH" : "")
   );
+
+  return {
+    wallet: wallet.toBase58(),
+    reporter: reporter.toBase58(),
+    riskScore: score,
+    timestamp,
+    pda: snapshotPda.toBase58(),
+    signature,
+    breached,
+  };
 }
 
-export async function fetchUserSnapshots(
+export interface OnChainSnapshot {
+  publicKey: string;
+  wallet: string;
+  reporter: string;
+  riskScore: number;
+  timestamp: number;
+}
+
+/**
+ * Every snapshot anchored for `wallet`, oldest first. Pass `reporter` to see
+ * one reporter's series only — the verification a reader actually wants is
+ * "what did THIS engine say", not "what has anyone ever said".
+ */
+export async function fetchWalletSnapshots(
   program: anchor.Program,
-  user: PublicKey
-) {
-  const snapshots = await (program as any).account.riskSnapshot.all([
-    {
-      memcmp: {
-        offset: 8, // 8-byte account discriminator, then `owner`
-        bytes: user.toBase58(),
-      },
-    },
-  ]);
+  wallet: PublicKey,
+  reporter?: PublicKey
+): Promise<OnChainSnapshot[]> {
+  const filters: { memcmp: { offset: number; bytes: string } }[] = [
+    // 8-byte account discriminator, then `wallet`.
+    { memcmp: { offset: 8, bytes: wallet.toBase58() } },
+  ];
+  if (reporter) {
+    // `reporter` follows `wallet`, so it sits at 8 + 32.
+    filters.push({ memcmp: { offset: 40, bytes: reporter.toBase58() } });
+  }
+
+  const snapshots = await (program as any).account.riskSnapshot.all(filters);
 
   return snapshots
     .map((s: any) => ({
       publicKey: s.publicKey.toBase58(),
+      wallet: s.account.wallet.toBase58(),
+      reporter: s.account.reporter.toBase58(),
       riskScore: s.account.riskScore,
       timestamp: s.account.timestamp.toNumber(),
     }))
-    .sort((a: any, b: any) => a.timestamp - b.timestamp);
+    .sort((a: OnChainSnapshot, b: OnChainSnapshot) => a.timestamp - b.timestamp);
+}
+
+/** Closes a snapshot this reporter wrote and reclaims its rent. */
+export async function closeSnapshotOnChain(
+  program: anchor.Program,
+  snapshot: PublicKey
+): Promise<string> {
+  return program.methods
+    .closeSnapshot()
+    .accountsPartial({ snapshot, reporter: program.provider.publicKey! })
+    .rpc();
 }

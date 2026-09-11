@@ -1,10 +1,10 @@
 {
-  "address": "35PirCKfyFFPYR3nLUGmpTs8YRyhfz9CAUpHVwVhiLi4",
+  "address": "6n6DZhiPwhYxiBLaRn9kYSW2s7WvWiVwDmciG2jP2Aoj",
   "metadata": {
     "name": "sentra",
-    "version": "0.1.0",
+    "version": "2.0.0",
     "spec": "0.1.0",
-    "description": "Created with Anchor"
+    "description": "Sentra — on-chain risk snapshots for Solana wallets"
   },
   "instructions": [
     {
@@ -45,7 +45,12 @@
               },
               {
                 "kind": "account",
-                "path": "user"
+                "path": "reporter"
+              },
+              {
+                "kind": "account",
+                "path": "snapshot.wallet",
+                "account": "RiskSnapshot"
               },
               {
                 "kind": "account",
@@ -56,7 +61,7 @@
           }
         },
         {
-          "name": "user",
+          "name": "reporter",
           "writable": true,
           "signer": true
         }
@@ -65,6 +70,10 @@
     },
     {
       "name": "initialize_preferences",
+      "docs": [
+        "Creates the caller's preference PDA. `reporter` is the key whose",
+        "snapshots are allowed to declare a breach against this wallet."
+      ],
       "discriminator": [
         74,
         30,
@@ -103,13 +112,13 @@
               },
               {
                 "kind": "account",
-                "path": "user"
+                "path": "owner"
               }
             ]
           }
         },
         {
-          "name": "user",
+          "name": "owner",
           "writable": true,
           "signer": true
         },
@@ -122,11 +131,23 @@
         {
           "name": "threshold",
           "type": "u8"
+        },
+        {
+          "name": "reporter",
+          "type": "pubkey"
         }
       ]
     },
     {
       "name": "record_risk_score",
+      "docs": [
+        "Writes an immutable snapshot of `wallet`'s risk score at `timestamp`.",
+        "",
+        "The reporter signs and pays. When the wallet's owner has registered a",
+        "preference, it is passed in read-only and the event says whether the",
+        "score breaches their threshold; when they have not, the event still",
+        "fires with no threshold attached."
+      ],
       "discriminator": [
         168,
         80,
@@ -138,38 +159,6 @@
         98
       ],
       "accounts": [
-        {
-          "name": "preference",
-          "writable": true,
-          "pda": {
-            "seeds": [
-              {
-                "kind": "const",
-                "value": [
-                  114,
-                  105,
-                  115,
-                  107,
-                  95,
-                  112,
-                  114,
-                  101,
-                  102,
-                  101,
-                  114,
-                  101,
-                  110,
-                  99,
-                  101
-                ]
-              },
-              {
-                "kind": "account",
-                "path": "user"
-              }
-            ]
-          }
-        },
         {
           "name": "snapshot",
           "writable": true,
@@ -195,7 +184,11 @@
               },
               {
                 "kind": "account",
-                "path": "user"
+                "path": "reporter"
+              },
+              {
+                "kind": "arg",
+                "path": "wallet"
               },
               {
                 "kind": "arg",
@@ -205,7 +198,39 @@
           }
         },
         {
-          "name": "user",
+          "name": "preference",
+          "optional": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  105,
+                  115,
+                  107,
+                  95,
+                  112,
+                  114,
+                  101,
+                  102,
+                  101,
+                  114,
+                  101,
+                  110,
+                  99,
+                  101
+                ]
+              },
+              {
+                "kind": "arg",
+                "path": "wallet"
+              }
+            ]
+          }
+        },
+        {
+          "name": "reporter",
           "writable": true,
           "signer": true
         },
@@ -215,6 +240,10 @@
         }
       ],
       "args": [
+        {
+          "name": "wallet",
+          "type": "pubkey"
+        },
         {
           "name": "risk_score",
           "type": "u8"
@@ -226,16 +255,16 @@
       ]
     },
     {
-      "name": "update_threshold",
+      "name": "update_preferences",
       "discriminator": [
-        251,
-        36,
-        24,
-        179,
-        157,
-        31,
-        239,
-        234
+        16,
+        64,
+        128,
+        133,
+        19,
+        206,
+        101,
+        159
       ],
       "accounts": [
         {
@@ -265,20 +294,24 @@
               },
               {
                 "kind": "account",
-                "path": "user"
+                "path": "owner"
               }
             ]
           }
         },
         {
-          "name": "user",
+          "name": "owner",
           "signer": true
         }
       ],
       "args": [
         {
-          "name": "new_threshold",
+          "name": "threshold",
           "type": "u8"
+        },
+        {
+          "name": "reporter",
+          "type": "pubkey"
         }
       ]
     }
@@ -313,16 +346,16 @@
   ],
   "events": [
     {
-      "name": "RiskAlertEvent",
+      "name": "RiskScoreRecorded",
       "discriminator": [
-        234,
-        17,
-        158,
-        193,
-        167,
-        48,
-        184,
-        9
+        62,
+        9,
+        38,
+        144,
+        220,
+        115,
+        14,
+        18
       ]
     }
   ],
@@ -334,23 +367,26 @@
     },
     {
       "code": 6001,
-      "name": "Unauthorized",
-      "msg": "Unauthorized access"
-    },
-    {
-      "code": 6002,
       "name": "InvalidRiskScore",
       "msg": "Risk score must be between 0 and 100"
     },
     {
-      "code": 6003,
+      "code": 6002,
       "name": "TimestampOutOfRange",
       "msg": "Timestamp is too far from the cluster clock"
+    },
+    {
+      "code": 6003,
+      "name": "UnauthorizedReporter",
+      "msg": "This reporter is not the one the wallet owner named"
     }
   ],
   "types": [
     {
-      "name": "RiskAlertEvent",
+      "name": "RiskPreference",
+      "docs": [
+        "A wallet owner's alert settings. One per wallet, owner-controlled."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
@@ -359,12 +395,56 @@
             "type": "pubkey"
           },
           {
+            "name": "threshold",
+            "docs": [
+              "Score at or above which a snapshot counts as a breach."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "reporter",
+            "docs": [
+              "The only reporter allowed to declare a breach for this wallet."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "updated_at",
+            "type": "i64"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          }
+        ]
+      }
+    },
+    {
+      "name": "RiskScoreRecorded",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "reporter",
+            "type": "pubkey"
+          },
+          {
             "name": "risk_score",
             "type": "u8"
           },
           {
             "name": "threshold",
-            "type": "u8"
+            "docs": [
+              "The owner's threshold when they have registered one and named this",
+              "reporter; otherwise absent, and `breached` is false."
+            ],
+            "type": {
+              "option": "u8"
+            }
           },
           {
             "name": "breached",
@@ -378,40 +458,20 @@
       }
     },
     {
-      "name": "RiskPreference",
+      "name": "RiskSnapshot",
+      "docs": [
+        "One immutable reading: this wallet scored this much at this second,",
+        "according to this reporter."
+      ],
       "type": {
         "kind": "struct",
         "fields": [
           {
-            "name": "owner",
+            "name": "wallet",
             "type": "pubkey"
           },
           {
-            "name": "threshold",
-            "type": "u8"
-          },
-          {
-            "name": "last_risk_score",
-            "type": "u8"
-          },
-          {
-            "name": "last_updated",
-            "type": "i64"
-          },
-          {
-            "name": "bump",
-            "type": "u8"
-          }
-        ]
-      }
-    },
-    {
-      "name": "RiskSnapshot",
-      "type": {
-        "kind": "struct",
-        "fields": [
-          {
-            "name": "owner",
+            "name": "reporter",
             "type": "pubkey"
           },
           {

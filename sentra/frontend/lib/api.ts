@@ -170,9 +170,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const getOverview = () => request<Overview>("/overview");
 
-export const getSnapshots = (wallet: string) =>
-  request<{ snapshots: Snapshot[]; total: number }>(
-    `/snapshots?wallet=${encodeURIComponent(wallet)}`
+export const getSnapshots = (wallet: string, all = false) =>
+  request<{
+    snapshots: Snapshot[];
+    total: number;
+    reporter: string | null;
+    programId: string;
+    cluster: string;
+  }>(
+    `/snapshots?wallet=${encodeURIComponent(wallet)}${all ? "&all=1" : ""}`
   );
 
 export const addWallet = (address: string, label?: string) =>

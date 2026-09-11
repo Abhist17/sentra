@@ -5,7 +5,11 @@ import { CONFIG } from "../config/env";
 import {
   createProvider,
   getProgram,
-  fetchUserSnapshots,
+  getProgramId,
+  getReporterPublicKey,
+  clusterFromRpcUrl,
+  fetchWalletSnapshots,
+  fetchPreference,
 } from "../services/blockchain.service";
 import {
   addWallet,
@@ -25,6 +29,8 @@ import {
   getWalletMetrics,
   getRiskHistory,
   getMarket,
+  getAnchors,
+  getOnChainState,
   forgetWallet,
 } from "../store/metrics.store";
 import { ASSET_SYMBOLS } from "../services/price.service";
@@ -161,6 +167,29 @@ export function registerRoutes(app: Express) {
     return { ready: failing.length === 0, checks, failing, sinceLastTick, market };
   }
 
+  /**
+   * What a reader needs to verify a snapshot independently: the program, the
+   * cluster it lives on, and the key that signs on this engine's behalf. The
+   * RPC URL itself is deliberately not exposed — hosted endpoints carry API
+   * keys in the path.
+   */
+  function onchainSummary() {
+    const state = getOnChainState();
+    // Only name a reporter when snapshots can actually be attributed to it.
+    // A read-only engine runs on an ephemeral key nobody should verify against.
+    const reporter = CONFIG.ENABLE_ONCHAIN_WRITES ? getReporterPublicKey() : null;
+
+    return {
+      enabled: CONFIG.ENABLE_ONCHAIN_WRITES,
+      programId: getProgramId().toBase58(),
+      cluster: clusterFromRpcUrl(CONFIG.RPC_URL),
+      reporter: reporter ? reporter.toBase58() : null,
+      anchorInterval: CONFIG.ONCHAIN_ANCHOR_INTERVAL,
+      lastAnchoredAt: state.lastAnchoredAt,
+      lastError: state.lastError,
+    };
+  }
+
   app.get("/health", (_req, res) => {
     const { ready, checks, market } = readiness();
 
@@ -179,7 +208,7 @@ export function registerRoutes(app: Express) {
         monitorInterval: CONFIG.MONITOR_INTERVAL,
       },
       telegram: telegramConfigured(),
-      onchainWrites: CONFIG.ENABLE_ONCHAIN_WRITES,
+      onchain: onchainSummary(),
       timestamp: Date.now(),
     });
   });
@@ -213,6 +242,7 @@ export function registerRoutes(app: Express) {
       ...w,
       metrics: getWalletMetrics(w.address),
       history: getRiskHistory(w.address).slice(-OVERVIEW_HISTORY_POINTS),
+      anchors: getAnchors(w.address),
     }));
 
     res.json({
@@ -236,7 +266,7 @@ export function registerRoutes(app: Express) {
         varConfidence: CONFIG.VAR_CONFIDENCE,
         varLambda: CONFIG.VAR_LAMBDA,
         historyDays: CONFIG.HISTORY_DAYS,
-        onchainWrites: CONFIG.ENABLE_ONCHAIN_WRITES,
+        onchain: onchainSummary(),
         telegram: telegramConfigured(),
         trackedAssets: ASSET_SYMBOLS,
         requiresApiKey: Boolean(CONFIG.API_KEY),
@@ -375,12 +405,37 @@ export function registerRoutes(app: Express) {
   });
 
   /* =============================
-     GET /snapshots — on-chain history
+     GET /onchain — how to verify a snapshot
   ============================= */
-  const loadSnapshots = async (walletParam: string) => {
+  app.get("/onchain", (_req, res) => {
+    res.json(onchainSummary());
+  });
+
+  /* =============================
+     GET /snapshots?wallet=&all=1 — on-chain history, read from the chain
+
+     By default this returns only what THIS engine's reporter wrote, which
+     is the verification a reader wants: "what did Sentra say, and when".
+     `all=1` widens it to every reporter that has ever scored the wallet,
+     each row saying who. `trusted` marks the rows from this engine's key.
+  ============================= */
+  const loadSnapshots = async (walletParam: string, all: boolean) => {
     assertValidAddress(walletParam);
     const program = getProgram(createProvider());
-    return fetchUserSnapshots(program, new PublicKey(walletParam));
+    const wallet = new PublicKey(walletParam);
+    const reporter = CONFIG.ENABLE_ONCHAIN_WRITES ? getReporterPublicKey() : null;
+
+    const snapshots = await fetchWalletSnapshots(
+      program,
+      wallet,
+      all || !reporter ? undefined : reporter
+    );
+
+    const ours = reporter?.toBase58() ?? null;
+    return snapshots.map((s) => ({
+      ...s,
+      trusted: ours !== null && s.reporter === ours,
+    }));
   };
 
   app.get(
@@ -390,10 +445,19 @@ export function registerRoutes(app: Express) {
       if (!walletParam) {
         return res.status(400).json({ error: "wallet address required" });
       }
+      const all = req.query.all === "1" || req.query.all === "true";
 
       try {
-        const snapshots = await loadSnapshots(walletParam);
-        res.json({ snapshots, total: snapshots.length });
+        const snapshots = await loadSnapshots(walletParam, all);
+        res.json({
+          snapshots,
+          total: snapshots.length,
+          reporter: CONFIG.ENABLE_ONCHAIN_WRITES
+            ? getReporterPublicKey()?.toBase58() ?? null
+            : null,
+          programId: getProgramId().toBase58(),
+          cluster: clusterFromRpcUrl(CONFIG.RPC_URL),
+        });
       } catch (err) {
         // The old handler swallowed the cause, so an unreachable validator and
         // a malformed address looked identical from the client.
@@ -414,8 +478,8 @@ export function registerRoutes(app: Express) {
       }
 
       try {
-        const snapshots = await loadSnapshots(walletParam);
-        const data = snapshots.map((s: { timestamp: number; riskScore: number }) => ({
+        const snapshots = await loadSnapshots(walletParam, false);
+        const data = snapshots.map((s) => ({
           time: new Date(s.timestamp * 1000).toISOString(),
           risk: s.riskScore,
         }));
@@ -424,6 +488,34 @@ export function registerRoutes(app: Express) {
       } catch (err) {
         res.status(502).json({
           error: "Failed to fetch chart data",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })
+  );
+
+  /* =============================
+     GET /preferences?wallet= — the owner-set threshold and named reporter
+  ============================= */
+  app.get(
+    "/preferences",
+    asyncRoute(async (req, res) => {
+      const walletParam = req.query.wallet as string | undefined;
+      if (!walletParam) {
+        return res.status(400).json({ error: "wallet address required" });
+      }
+
+      try {
+        assertValidAddress(walletParam);
+        const program = getProgram(createProvider());
+        const preference = await fetchPreference(
+          program,
+          new PublicKey(walletParam)
+        );
+        res.json({ wallet: walletParam, preference });
+      } catch (err) {
+        res.status(502).json({
+          error: "Failed to fetch preference",
           detail: err instanceof Error ? err.message : String(err),
         });
       }

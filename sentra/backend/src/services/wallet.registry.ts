@@ -8,19 +8,19 @@ export interface WalletEntry {
   label: string;
   addedAt: number;
   isDemo: boolean;
-  isOwned: boolean; // true = server keypair owns this wallet → can write on-chain
 }
 
 const registry: Map<string, WalletEntry> = new Map();
 
-// ── Demo wallets — monitored but NOT owned ───────────────────────
-// We read their balances and calculate risk but cannot sign for them
+// ── Demo wallet ──────────────────────────────────────────────────
+// Monitored out of the box so a fresh engine scores something on its first
+// tick. It cannot be removed through the API; it can be re-labelled by
+// adding wallets of your own and ignoring it.
 const DEMO_WALLETS: Omit<WalletEntry, "addedAt">[] = [
   {
     address: "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM",
     label: "Solana Stake Pool (Foundation)",
     isDemo: true,
-    isOwned: false,
   },
 ];
 
@@ -87,7 +87,6 @@ function restore() {
             : shortLabel(entry.address),
         addedAt: Number(entry.addedAt) || Date.now(),
         isDemo: false,
-        isOwned: Boolean(entry.isOwned),
       });
       restored++;
     }
@@ -106,11 +105,7 @@ for (const w of DEMO_WALLETS) {
 }
 restore();
 
-export function addWallet(
-  address: string,
-  label?: string,
-  isOwned = false
-): WalletEntry {
+export function addWallet(address: string, label?: string): WalletEntry {
   if (typeof address !== "string" || !address.trim()) {
     throw new Error("address is required");
   }
@@ -135,12 +130,11 @@ export function addWallet(
     label: label?.trim().slice(0, 64) || shortLabel(trimmed),
     addedAt: Date.now(),
     isDemo: false,
-    isOwned,
   };
 
   registry.set(trimmed, entry);
   persist();
-  console.log(`📥 Wallet added: ${entry.label} (owned: ${isOwned})`);
+  console.log(`📥 Wallet added: ${entry.label}`);
   return entry;
 }
 
@@ -164,10 +158,6 @@ export function getWalletPublicKeys(): PublicKey[] {
 
 export function getWalletLabel(address: string): string {
   return registry.get(address)?.label ?? shortLabel(address);
-}
-
-export function isWalletOwned(address: string): boolean {
-  return registry.get(address)?.isOwned ?? false;
 }
 
 export function hasWallet(address: string): boolean {

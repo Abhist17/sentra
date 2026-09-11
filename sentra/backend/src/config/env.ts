@@ -141,6 +141,17 @@ export const CONFIG = {
   // Write risk scores on-chain. Each write rents a new snapshot account,
   // so it stays off unless explicitly enabled.
   ENABLE_ONCHAIN_WRITES: bool("ENABLE_ONCHAIN_WRITES", false),
+  // How often a wallet's score is anchored, independent of the tick. Scores
+  // are computed every MONITOR_INTERVAL; anchoring every one of them would
+  // rent ~2,900 accounts a day per wallet. Hourly is the default, and a
+  // score crossing a risk band is anchored immediately regardless — those
+  // are the readings worth being able to prove later.
+  ONCHAIN_ANCHOR_INTERVAL: clampedNum(
+    "ONCHAIN_ANCHOR_INTERVAL",
+    60 * 60 * 1000,
+    30_000,
+    24 * 60 * 60 * 1000
+  ),
 
   // ── Alerts ───────────────────────────────────────────────
   TELEGRAM_BOT_TOKEN: process.env.TELEGRAM_BOT_TOKEN || "",

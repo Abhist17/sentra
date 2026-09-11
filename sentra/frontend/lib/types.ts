@@ -64,14 +64,46 @@ export interface RiskPoint {
   portfolio: number;
 }
 
+/** One score the engine anchored on-chain, as it knew it when it landed. */
+export interface AnchorRecord {
+  wallet: string;
+  reporter: string;
+  riskScore: number;
+  /** Unix seconds, as stored on-chain. */
+  timestamp: number;
+  /** Snapshot account address. */
+  pda: string;
+  /** Transaction signature; empty when restored from chain after a restart. */
+  signature: string;
+  breached: boolean;
+}
+
+export type ClusterName =
+  | "mainnet-beta"
+  | "devnet"
+  | "testnet"
+  | "localnet"
+  | "custom";
+
+export interface OnChainConfig {
+  enabled: boolean;
+  programId: string;
+  cluster: ClusterName;
+  /** The engine's signing key, or null when nothing is being anchored. */
+  reporter: string | null;
+  anchorInterval: number;
+  lastAnchoredAt: number;
+  lastError: string | null;
+}
+
 export interface WalletRow {
   address: string;
   label: string;
   addedAt: number;
   isDemo: boolean;
-  isOwned: boolean;
   metrics: WalletMetrics | null;
   history: RiskPoint[];
+  anchors: AnchorRecord[];
 }
 
 export interface Overview {
@@ -104,7 +136,7 @@ export interface Overview {
     varConfidence: number;
     varLambda: number;
     historyDays: number;
-    onchainWrites: boolean;
+    onchain: OnChainConfig;
     telegram: boolean;
     trackedAssets: string[];
     requiresApiKey: boolean;
@@ -114,6 +146,10 @@ export interface Overview {
 
 export interface Snapshot {
   publicKey: string;
+  wallet: string;
+  reporter: string;
   riskScore: number;
   timestamp: number;
+  /** Written by the engine's own reporter key. */
+  trusted: boolean;
 }

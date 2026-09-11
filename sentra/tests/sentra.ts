@@ -4,28 +4,85 @@ import { Sentra } from "../target/types/sentra";
 import { expect } from "chai";
 
 /** Snapshot timestamps are checked against the cluster clock, so tests must
- *  use SECONDS. The old tests passed Date.now() (milliseconds), which is ~55k
- *  years in the future and disagreed with the backend's own unit. */
+ *  use SECONDS. Date.now() is milliseconds — ~55k years in the future — and
+ *  disagrees with the backend's own unit. */
 const nowSeconds = () => Math.floor(Date.now() / 1000);
+
+/** Each test that writes a snapshot takes a fresh second so PDAs never
+ *  collide across cases, however fast the validator runs them. */
+let tick = 0;
+const uniqueTimestamp = () => new anchor.BN(nowSeconds() + tick++);
 
 describe("sentra", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
 
   const program = anchor.workspace.Sentra as Program<Sentra>;
-  const user = provider.wallet;
 
-  let preferencePda: anchor.web3.PublicKey;
+  // The provider wallet plays the REPORTER — the engine's signing key.
+  const reporter = provider.wallet;
 
-  const snapshotPdaFor = (timestamp: anchor.BN, owner = user.publicKey) =>
+  // A wallet being scored. It never signs anything: being scored is not
+  // something a wallet has to consent to, any more than being looked at.
+  const scored = anchor.web3.Keypair.generate();
+
+  // A wallet that registers a preference and names the reporter.
+  const owner = anchor.web3.Keypair.generate();
+
+  const preferencePdaFor = (who: anchor.web3.PublicKey) =>
+    anchor.web3.PublicKey.findProgramAddressSync(
+      [Buffer.from("risk_preference"), who.toBuffer()],
+      program.programId
+    )[0];
+
+  const snapshotPdaFor = (
+    wallet: anchor.web3.PublicKey,
+    timestamp: anchor.BN,
+    by: anchor.web3.PublicKey = reporter.publicKey
+  ) =>
     anchor.web3.PublicKey.findProgramAddressSync(
       [
         Buffer.from("risk_snapshot"),
-        owner.toBuffer(),
+        by.toBuffer(),
+        wallet.toBuffer(),
         timestamp.toArrayLike(Buffer, "le", 8),
       ],
       program.programId
     )[0];
+
+  async function fund(key: anchor.web3.PublicKey, sol = 1) {
+    const sig = await provider.connection.requestAirdrop(
+      key,
+      sol * anchor.web3.LAMPORTS_PER_SOL
+    );
+    await provider.connection.confirmTransaction(sig, "confirmed");
+  }
+
+  /**
+   * Pulls the program's own events back out of a confirmed transaction.
+   *
+   * Polls: `.rpc()` resolves when the transaction is confirmed, but the
+   * validator's transaction index can lag that by a slot, so an immediate
+   * getTransaction sometimes answers null for a transaction that landed.
+   */
+  async function eventsOf(signature: string) {
+    const deadline = Date.now() + 10_000;
+    let logs: string[] | null | undefined;
+
+    while (Date.now() < deadline) {
+      const tx = await provider.connection.getTransaction(signature, {
+        commitment: "confirmed",
+        maxSupportedTransactionVersion: 0,
+      });
+      logs = tx?.meta?.logMessages;
+      if (logs) break;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+
+    expect(logs, `transaction ${signature} never became readable`).to.exist;
+    const parser = new anchor.EventParser(program.programId, program.coder);
+    return Array.from(parser.parseLogs(logs!));
+  }
 
   /**
    * `anchor test` deploys and starts the suite immediately, so the first
@@ -63,259 +120,392 @@ describe("sentra", () => {
 
   before(async () => {
     await waitForDeployment();
-
-    [preferencePda] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("risk_preference"), user.publicKey.toBuffer()],
-      program.programId
-    );
+    await fund(owner.publicKey);
   });
 
   // ------------------------------
-  // Initialize Preference
+  // Owner: preferences
   // ------------------------------
-  it("initializes preference correctly", async () => {
-    // The PDA survives between test runs against a persistent validator, so
-    // initialize only when it is actually missing.
-    const existing = await provider.connection.getAccountInfo(preferencePda);
-
-    if (!existing) {
+  describe("preferences", () => {
+    it("lets a wallet owner register a threshold and a trusted reporter", async () => {
       await program.methods
-        .initializePreferences(60)
-        .accounts({
-          preference: preferencePda,
-          user: user.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .rpc();
-    }
-
-    const account = await program.account.riskPreference.fetch(preferencePda);
-    expect(account.owner.toString()).to.equal(user.publicKey.toString());
-    expect(account.threshold).to.be.at.most(100);
-  });
-
-  it("rejects a threshold above 100", async () => {
-    const attacker = anchor.web3.Keypair.generate();
-    const [pda] = anchor.web3.PublicKey.findProgramAddressSync(
-      [Buffer.from("risk_preference"), attacker.publicKey.toBuffer()],
-      program.programId
-    );
-
-    // Fund the fresh payer so the failure is the threshold check, not rent.
-    const sig = await provider.connection.requestAirdrop(
-      attacker.publicKey,
-      anchor.web3.LAMPORTS_PER_SOL
-    );
-    await provider.connection.confirmTransaction(sig, "confirmed");
-
-    try {
-      await program.methods
-        .initializePreferences(120)
-        .accounts({
-          preference: pda,
-          user: attacker.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .signers([attacker])
+        .initializePreferences(60, reporter.publicKey)
+        .accounts({ owner: owner.publicKey })
+        .signers([owner])
         .rpc();
 
-      expect.fail("Should have been rejected");
-    } catch (err: any) {
-      expect(err.error?.errorCode?.code ?? String(err)).to.contain(
-        "InvalidThreshold"
+      const pref = await program.account.riskPreference.fetch(
+        preferencePdaFor(owner.publicKey)
       );
-    }
-  });
+      expect(pref.owner.toBase58()).to.equal(owner.publicKey.toBase58());
+      expect(pref.threshold).to.equal(60);
+      expect(pref.reporter.toBase58()).to.equal(reporter.publicKey.toBase58());
+      expect(pref.updatedAt.toNumber()).to.be.greaterThan(0);
+    });
 
-  it("refuses to reinitialize an existing preference", async () => {
-    try {
+    it("rejects a threshold above 100", async () => {
+      const someone = anchor.web3.Keypair.generate();
+      // Fund the fresh payer so the failure is the threshold check, not rent.
+      await fund(someone.publicKey);
+
+      try {
+        await program.methods
+          .initializePreferences(120, reporter.publicKey)
+          .accounts({ owner: someone.publicKey })
+          .signers([someone])
+          .rpc();
+        expect.fail("Should have been rejected");
+      } catch (err: any) {
+        expect(err.error?.errorCode?.code ?? String(err)).to.contain(
+          "InvalidThreshold"
+        );
+      }
+    });
+
+    it("refuses to reinitialise an existing preference", async () => {
+      try {
+        await program.methods
+          .initializePreferences(50, reporter.publicKey)
+          .accounts({ owner: owner.publicKey })
+          .signers([owner])
+          .rpc();
+        expect.fail("Should not allow reinitialisation");
+      } catch (err) {
+        expect(err).to.exist;
+      }
+    });
+
+    it("lets the owner change threshold and reporter", async () => {
+      const other = anchor.web3.Keypair.generate().publicKey;
+
       await program.methods
-        .initializePreferences(50)
-        .accounts({
-          preference: preferencePda,
-          user: user.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
+        .updatePreferences(70, other)
+        .accounts({ owner: owner.publicKey })
+        .signers([owner])
         .rpc();
 
-      expect.fail("Should not allow reinitialization");
-    } catch (err) {
-      expect(err).to.exist;
-    }
-  });
-
-  // ------------------------------
-  // Update Threshold
-  // ------------------------------
-  it("updates threshold correctly", async () => {
-    await program.methods
-      .updateThreshold(70)
-      .accounts({ preference: preferencePda, user: user.publicKey })
-      .rpc();
-
-    const account = await program.account.riskPreference.fetch(preferencePda);
-    expect(account.threshold).to.equal(70);
-  });
-
-  it("blocks a non-owner from updating the threshold", async () => {
-    const attacker = anchor.web3.Keypair.generate();
-
-    try {
-      // The PDA is seeded by the signer, so an attacker signing for someone
-      // else's preference account cannot satisfy the seeds constraint.
-      await program.methods
-        .updateThreshold(90)
-        .accounts({ preference: preferencePda, user: attacker.publicKey })
-        .signers([attacker])
-        .rpc();
-
-      expect.fail("Unauthorized update should fail");
-    } catch (err) {
-      expect(err).to.exist;
-    }
-
-    const account = await program.account.riskPreference.fetch(preferencePda);
-    expect(account.threshold).to.equal(70);
-  });
-
-  // ------------------------------
-  // Record Risk Score
-  // ------------------------------
-  it("records a risk score and creates a snapshot", async () => {
-    const timestamp = new anchor.BN(nowSeconds());
-    const snapshotPda = snapshotPdaFor(timestamp);
-
-    await program.methods
-      .recordRiskScore(50, timestamp)
-      .accounts({
-        preference: preferencePda,
-        snapshot: snapshotPda,
-        user: user.publicKey,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
-      .rpc();
-
-    const snapshot = await program.account.riskSnapshot.fetch(snapshotPda);
-    expect(snapshot.riskScore).to.equal(50);
-    expect(snapshot.owner.toString()).to.equal(user.publicKey.toString());
-    expect(snapshot.timestamp.toNumber()).to.equal(timestamp.toNumber());
-
-    const pref = await program.account.riskPreference.fetch(preferencePda);
-    expect(pref.lastRiskScore).to.equal(50);
-  });
-
-  it("rejects a risk score above 100", async () => {
-    const timestamp = new anchor.BN(nowSeconds() + 1);
-
-    try {
-      await program.methods
-        .recordRiskScore(150, timestamp)
-        .accounts({
-          preference: preferencePda,
-          snapshot: snapshotPdaFor(timestamp),
-          user: user.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
-        .rpc();
-
-      expect.fail("Invalid risk score should fail");
-    } catch (err: any) {
-      expect(err.error?.errorCode?.code ?? String(err)).to.contain(
-        "InvalidRiskScore"
+      let pref = await program.account.riskPreference.fetch(
+        preferencePdaFor(owner.publicKey)
       );
-    }
-  });
+      expect(pref.threshold).to.equal(70);
+      expect(pref.reporter.toBase58()).to.equal(other.toBase58());
 
-  it("rejects a timestamp far from the cluster clock", async () => {
-    // Guards against minting snapshots at arbitrary points in the chart.
-    const timestamp = new anchor.BN(nowSeconds() + 60 * 60 * 24);
-
-    try {
+      // Put it back so the reporter tests below can use it.
       await program.methods
-        .recordRiskScore(40, timestamp)
-        .accounts({
-          preference: preferencePda,
-          snapshot: snapshotPdaFor(timestamp),
-          user: user.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId,
-        })
+        .updatePreferences(70, reporter.publicKey)
+        .accounts({ owner: owner.publicKey })
+        .signers([owner])
         .rpc();
 
-      expect.fail("Out-of-range timestamp should fail");
-    } catch (err: any) {
-      expect(err.error?.errorCode?.code ?? String(err)).to.contain(
-        "TimestampOutOfRange"
+      pref = await program.account.riskPreference.fetch(
+        preferencePdaFor(owner.publicKey)
       );
-    }
-  });
+      expect(pref.reporter.toBase58()).to.equal(reporter.publicKey.toBase58());
+    });
 
-  it("derives a distinct snapshot per timestamp", async () => {
-    const t1 = new anchor.BN(nowSeconds());
-    const t2 = new anchor.BN(nowSeconds() + 1);
+    it("blocks a non-owner from touching someone else's preference", async () => {
+      const attacker = anchor.web3.Keypair.generate();
 
-    expect(snapshotPdaFor(t1).toString()).to.not.equal(
-      snapshotPdaFor(t2).toString()
-    );
+      try {
+        // The PDA is seeded by the signer, so an attacker signing for another
+        // wallet's preference cannot satisfy the seeds constraint.
+        await program.methods
+          .updatePreferences(90, attacker.publicKey)
+          .accountsPartial({
+            preference: preferencePdaFor(owner.publicKey),
+            owner: attacker.publicKey,
+          })
+          .signers([attacker])
+          .rpc();
+        expect.fail("Unauthorised update should fail");
+      } catch (err) {
+        expect(err).to.exist;
+      }
+
+      const pref = await program.account.riskPreference.fetch(
+        preferencePdaFor(owner.publicKey)
+      );
+      expect(pref.threshold).to.equal(70);
+    });
   });
 
   // ------------------------------
-  // Close Snapshot
+  // Reporter: snapshots
   // ------------------------------
-  it("closes a snapshot and refunds its rent", async () => {
-    const timestamp = new anchor.BN(nowSeconds() + 2);
-    const snapshotPda = snapshotPdaFor(timestamp);
+  describe("snapshots", () => {
+    it("anchors a score for a wallet that has done nothing at all", async () => {
+      const timestamp = uniqueTimestamp();
+      const pda = snapshotPdaFor(scored.publicKey, timestamp);
 
-    await program.methods
-      .recordRiskScore(30, timestamp)
-      .accounts({
-        preference: preferencePda,
-        snapshot: snapshotPda,
-        user: user.publicKey,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
-      .rpc();
+      const sig = await program.methods
+        .recordRiskScore(scored.publicKey, 50, timestamp)
+        // The scored wallet has no preference — pass null, which the client
+        // encodes as the program id, Anchor's "None" for optional accounts.
+        .accountsPartial({ preference: null, reporter: reporter.publicKey })
+        .rpc();
 
-    const rent = await provider.connection.getBalance(snapshotPda);
-    expect(rent).to.be.greaterThan(0);
+      const snapshot = await program.account.riskSnapshot.fetch(pda);
+      expect(snapshot.wallet.toBase58()).to.equal(scored.publicKey.toBase58());
+      expect(snapshot.reporter.toBase58()).to.equal(
+        reporter.publicKey.toBase58()
+      );
+      expect(snapshot.riskScore).to.equal(50);
+      expect(snapshot.timestamp.toNumber()).to.equal(timestamp.toNumber());
 
-    await program.methods
-      .closeSnapshot()
-      .accounts({ snapshot: snapshotPda, user: user.publicKey })
-      .rpc();
+      // No preference means no threshold and no breach — the event still
+      // fires so an indexer sees every reading.
+      const events = await eventsOf(sig);
+      expect(events).to.have.length(1);
+      expect(events[0].name).to.equal("riskScoreRecorded");
+      expect(events[0].data.riskScore).to.equal(50);
+      expect(events[0].data.threshold).to.equal(null);
+      expect(events[0].data.breached).to.equal(false);
+    });
 
-    const closed = await provider.connection.getAccountInfo(snapshotPda);
-    expect(closed).to.equal(null);
+    it("declares a breach against the owner's threshold when named", async () => {
+      const timestamp = uniqueTimestamp();
+
+      const sig = await program.methods
+        .recordRiskScore(owner.publicKey, 85, timestamp)
+        // Omitting `preference` lets the client derive the PDA from `wallet`.
+        .accounts({ reporter: reporter.publicKey })
+        .rpc();
+
+      const [event] = await eventsOf(sig);
+      expect(event.data.wallet.toBase58()).to.equal(owner.publicKey.toBase58());
+      expect(event.data.threshold).to.equal(70);
+      expect(event.data.breached).to.equal(true);
+    });
+
+    it("does not declare a breach below the threshold", async () => {
+      const timestamp = uniqueTimestamp();
+
+      const sig = await program.methods
+        .recordRiskScore(owner.publicKey, 69, timestamp)
+        .accounts({ reporter: reporter.publicKey })
+        .rpc();
+
+      const [event] = await eventsOf(sig);
+      expect(event.data.threshold).to.equal(70);
+      expect(event.data.breached).to.equal(false);
+    });
+
+    it("refuses an unnamed reporter the owner's threshold", async () => {
+      const stranger = anchor.web3.Keypair.generate();
+      await fund(stranger.publicKey);
+      const timestamp = uniqueTimestamp();
+
+      try {
+        await program.methods
+          .recordRiskScore(owner.publicKey, 99, timestamp)
+          .accounts({ reporter: stranger.publicKey })
+          .signers([stranger])
+          .rpc();
+        expect.fail("A reporter the owner did not name must not use their threshold");
+      } catch (err: any) {
+        expect(err.error?.errorCode?.code ?? String(err)).to.contain(
+          "UnauthorizedReporter"
+        );
+      }
+    });
+
+    it("still lets an unnamed reporter anchor a plain score", async () => {
+      const stranger = anchor.web3.Keypair.generate();
+      await fund(stranger.publicKey);
+      const timestamp = uniqueTimestamp();
+
+      // Without invoking the preference, anyone can publish their own
+      // reading. The snapshot records who — that is the whole trust model.
+      const sig = await program.methods
+        .recordRiskScore(owner.publicKey, 99, timestamp)
+        .accountsPartial({ preference: null, reporter: stranger.publicKey })
+        .signers([stranger])
+        .rpc();
+
+      const snapshot = await program.account.riskSnapshot.fetch(
+        snapshotPdaFor(owner.publicKey, timestamp, stranger.publicKey)
+      );
+      expect(snapshot.reporter.toBase58()).to.equal(
+        stranger.publicKey.toBase58()
+      );
+
+      const [event] = await eventsOf(sig);
+      expect(event.data.threshold).to.equal(null);
+      expect(event.data.breached).to.equal(false);
+    });
+
+    it("keeps two reporters' series apart for the same wallet and second", async () => {
+      const other = anchor.web3.Keypair.generate();
+      await fund(other.publicKey);
+      const timestamp = uniqueTimestamp();
+
+      await program.methods
+        .recordRiskScore(scored.publicKey, 10, timestamp)
+        .accountsPartial({ preference: null, reporter: reporter.publicKey })
+        .rpc();
+
+      // Same wallet, same timestamp, different reporter: a different PDA, so
+      // one reporter cannot squat on a slot to block another.
+      await program.methods
+        .recordRiskScore(scored.publicKey, 90, timestamp)
+        .accountsPartial({ preference: null, reporter: other.publicKey })
+        .signers([other])
+        .rpc();
+
+      const mine = await program.account.riskSnapshot.fetch(
+        snapshotPdaFor(scored.publicKey, timestamp)
+      );
+      const theirs = await program.account.riskSnapshot.fetch(
+        snapshotPdaFor(scored.publicKey, timestamp, other.publicKey)
+      );
+      expect(mine.riskScore).to.equal(10);
+      expect(theirs.riskScore).to.equal(90);
+    });
+
+    it("rejects a risk score above 100", async () => {
+      const timestamp = uniqueTimestamp();
+
+      try {
+        await program.methods
+          .recordRiskScore(scored.publicKey, 150, timestamp)
+          .accountsPartial({ preference: null, reporter: reporter.publicKey })
+          .rpc();
+        expect.fail("Invalid risk score should fail");
+      } catch (err: any) {
+        expect(err.error?.errorCode?.code ?? String(err)).to.contain(
+          "InvalidRiskScore"
+        );
+      }
+    });
+
+    it("rejects a timestamp far from the cluster clock", async () => {
+      // Guards against minting snapshots at arbitrary points in the chart.
+      const timestamp = new anchor.BN(nowSeconds() + 60 * 60 * 24);
+
+      try {
+        await program.methods
+          .recordRiskScore(scored.publicKey, 40, timestamp)
+          .accountsPartial({ preference: null, reporter: reporter.publicKey })
+          .rpc();
+        expect.fail("Out-of-range timestamp should fail");
+      } catch (err: any) {
+        expect(err.error?.errorCode?.code ?? String(err)).to.contain(
+          "TimestampOutOfRange"
+        );
+      }
+    });
+
+    it("refuses to overwrite an existing snapshot", async () => {
+      const timestamp = uniqueTimestamp();
+
+      await program.methods
+        .recordRiskScore(scored.publicKey, 20, timestamp)
+        .accountsPartial({ preference: null, reporter: reporter.publicKey })
+        .rpc();
+
+      try {
+        await program.methods
+          .recordRiskScore(scored.publicKey, 80, timestamp)
+          .accountsPartial({ preference: null, reporter: reporter.publicKey })
+          .rpc();
+        expect.fail("A snapshot must be immutable once written");
+      } catch (err) {
+        expect(err).to.exist;
+      }
+
+      const snapshot = await program.account.riskSnapshot.fetch(
+        snapshotPdaFor(scored.publicKey, timestamp)
+      );
+      expect(snapshot.riskScore).to.equal(20);
+    });
+
+    it("derives a distinct snapshot per timestamp", () => {
+      const t1 = new anchor.BN(nowSeconds());
+      const t2 = new anchor.BN(nowSeconds() + 1);
+
+      expect(snapshotPdaFor(scored.publicKey, t1).toBase58()).to.not.equal(
+        snapshotPdaFor(scored.publicKey, t2).toBase58()
+      );
+    });
+
+    it("lists a wallet's snapshots by memcmp on the wallet field", async () => {
+      // This is the query the engine's /snapshots route runs. Offset 8 skips
+      // the account discriminator; `wallet` is the first field.
+      const all = await program.account.riskSnapshot.all([
+        { memcmp: { offset: 8, bytes: scored.publicKey.toBase58() } },
+      ]);
+
+      expect(all.length).to.be.greaterThan(1);
+      for (const { account } of all) {
+        expect(account.wallet.toBase58()).to.equal(scored.publicKey.toBase58());
+      }
+
+      // Narrowing to one reporter: `reporter` follows `wallet` at offset 40.
+      const mine = await program.account.riskSnapshot.all([
+        { memcmp: { offset: 8, bytes: scored.publicKey.toBase58() } },
+        { memcmp: { offset: 40, bytes: reporter.publicKey.toBase58() } },
+      ]);
+      expect(mine.length).to.be.greaterThan(0);
+      expect(mine.length).to.be.lessThan(all.length);
+    });
   });
 
-  it("blocks a non-owner from closing a snapshot", async () => {
-    const timestamp = new anchor.BN(nowSeconds() + 3);
-    const snapshotPda = snapshotPdaFor(timestamp);
+  // ------------------------------
+  // Reporter: rent
+  // ------------------------------
+  describe("close_snapshot", () => {
+    it("closes a snapshot and refunds its rent to the reporter", async () => {
+      const timestamp = uniqueTimestamp();
+      const pda = snapshotPdaFor(scored.publicKey, timestamp);
 
-    await program.methods
-      .recordRiskScore(35, timestamp)
-      .accounts({
-        preference: preferencePda,
-        snapshot: snapshotPda,
-        user: user.publicKey,
-        systemProgram: anchor.web3.SystemProgram.programId,
-      })
-      .rpc();
+      await program.methods
+        .recordRiskScore(scored.publicKey, 30, timestamp)
+        .accountsPartial({ preference: null, reporter: reporter.publicKey })
+        .rpc();
 
-    const attacker = anchor.web3.Keypair.generate();
+      const rent = await provider.connection.getBalance(pda);
+      expect(rent).to.be.greaterThan(0);
 
-    try {
+      const before = await provider.connection.getBalance(reporter.publicKey);
+
       await program.methods
         .closeSnapshot()
-        .accounts({ snapshot: snapshotPda, user: attacker.publicKey })
-        .signers([attacker])
+        .accountsPartial({ snapshot: pda, reporter: reporter.publicKey })
         .rpc();
 
-      expect.fail("A non-owner should not be able to close the snapshot");
-    } catch (err) {
-      expect(err).to.exist;
-    }
+      const closed = await provider.connection.getAccountInfo(pda);
+      expect(closed).to.equal(null);
 
-    const stillThere = await provider.connection.getAccountInfo(snapshotPda);
-    expect(stillThere).to.not.equal(null);
+      // The refund lands minus the fee for the closing transaction itself.
+      const after = await provider.connection.getBalance(reporter.publicKey);
+      expect(after).to.be.greaterThan(before);
+    });
+
+    it("blocks anyone but the paying reporter from closing a snapshot", async () => {
+      const timestamp = uniqueTimestamp();
+      const pda = snapshotPdaFor(scored.publicKey, timestamp);
+
+      await program.methods
+        .recordRiskScore(scored.publicKey, 35, timestamp)
+        .accountsPartial({ preference: null, reporter: reporter.publicKey })
+        .rpc();
+
+      const attacker = anchor.web3.Keypair.generate();
+      await fund(attacker.publicKey);
+
+      try {
+        await program.methods
+          .closeSnapshot()
+          .accountsPartial({ snapshot: pda, reporter: attacker.publicKey })
+          .signers([attacker])
+          .rpc();
+        expect.fail("Only the reporter that paid may reclaim the rent");
+      } catch (err) {
+        expect(err).to.exist;
+      }
+
+      const stillThere = await provider.connection.getAccountInfo(pda);
+      expect(stillThere).to.not.equal(null);
+    });
   });
 });

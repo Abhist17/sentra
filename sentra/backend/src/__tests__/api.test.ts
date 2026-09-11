@@ -67,9 +67,29 @@ test("GET /health reports liveness and feature flags", async () => {
   assert.equal(typeof body.walletsMonitored, "number");
   assert.equal(typeof body.engine.lastTickAt, "number");
   assert.equal(typeof body.telegram, "boolean");
-  assert.equal(typeof body.onchainWrites, "boolean");
+  assert.equal(typeof body.onchain.enabled, "boolean");
   assert.equal(typeof body.version, "string");
   assert.equal(typeof body.uptimeSeconds, "number");
+});
+
+test("GET /onchain says what a reader needs to verify a snapshot", async () => {
+  const res = await get("/onchain");
+  assert.equal(res.status, 200);
+
+  const body = await res.json();
+  // Writes are off in the test environment, so nothing is being anchored
+  // and no reporter must be presented for anyone to verify against.
+  assert.equal(body.enabled, false);
+  assert.equal(body.reporter, null);
+  // The program id is public and fixed — it comes from the bundled IDL.
+  assert.match(body.programId, /^[1-9A-HJ-NP-Za-km-z]{32,44}$/);
+  assert.ok(
+    ["mainnet-beta", "devnet", "testnet", "localnet", "custom"].includes(
+      body.cluster
+    )
+  );
+  assert.equal(typeof body.anchorInterval, "number");
+  assert.equal(body.lastError, null);
 });
 
 test("GET /health stays 200 even when the engine is not ready", async () => {
@@ -127,6 +147,13 @@ test("GET /overview returns every section the dashboard needs", async () => {
   // Model parameters must reach the UI, which renders its captions from them.
   assert.equal(typeof body.config.varHorizonDays, "number");
   assert.equal(typeof body.config.varConfidence, "number");
+  // The on-chain panel reads these; a wallet always carries an anchors list,
+  // empty until the engine has written one.
+  assert.equal(typeof body.config.onchain.enabled, "boolean");
+  assert.equal(typeof body.config.onchain.programId, "string");
+  for (const wallet of body.wallets) {
+    assert.ok(Array.isArray(wallet.anchors), "every wallet lists its anchors");
+  }
 });
 
 test("aggregate endpoints agree with /overview", async () => {
@@ -260,6 +287,15 @@ test("/snapshots rejects a malformed address before touching the chain", async (
 test("/snapshots requires a wallet parameter", async () => {
   const res = await get("/snapshots");
   assert.equal(res.status, 400);
+});
+
+test("/preferences validates the address and requires one", async () => {
+  assert.equal((await get("/preferences")).status, 400);
+
+  const res = await get("/preferences?wallet=nonsense");
+  assert.equal(res.status, 502);
+  const body = await res.json();
+  assert.ok(body.detail);
 });
 
 test("CORS headers are present for browser clients", async () => {

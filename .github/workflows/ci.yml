@@ -58,3 +58,11 @@ jobs:
       # Type-checks the program without the SBF toolchain, which is a ~500MB
       # download and not needed to catch compile errors.
       - run: cargo check -p sentra --manifest-path sentra/Cargo.toml
+      # The backend bundles the program's IDL. This regenerates it from the
+      # program's declared shape and fails if the bundled copy has drifted —
+      # the mismatch would otherwise surface as a ConstraintSeeds error on
+      # the first on-chain write of a deployment.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node sentra/scripts/gen-idl.js --check

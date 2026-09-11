@@ -17,20 +17,27 @@ import {
   createProvider,
   getProgram,
   fetchWalletPortfolio,
+  fetchWalletSnapshots,
   recordRiskScoreOnChain,
+  type AnchorRecord,
 } from "../services/blockchain.service";
 import {
   getWalletPublicKeys,
   getWalletLabel,
-  isWalletOwned,
   hasWallet,
 } from "../services/wallet.registry";
 import {
   updateMetrics,
   updateMarket,
+  recordAnchor,
+  seedAnchors,
+  hasAnchors,
+  getAnchors,
+  setOnChainError,
   type AssetHolding,
 } from "../store/metrics.store";
 import { CONFIG } from "../config/env";
+import type { PublicKey } from "@solana/web3.js";
 
 // ─────────────────────────────────────────────
 // 1. SHORT-TERM VOLATILITY TRACKER
@@ -259,6 +266,105 @@ function buildWalletRiskAlertMessage(
 }
 
 // ─────────────────────────────────────────────
+// 6. ON-CHAIN ANCHORING POLICY
+// ─────────────────────────────────────────────
+
+/**
+ * Band boundaries, shared with the dashboard's ramp: Calm / Watch / Elevated /
+ * Severe. Anchoring on every tick would rent ~2,900 accounts a day per
+ * wallet; anchoring on a timer alone would miss the moment a book crossed
+ * into Severe. So: a snapshot on the timer, plus one the instant the band
+ * changes — the readings a reader would actually want to be able to prove.
+ */
+export const RISK_BANDS = [0, 25, 45, 70] as const;
+
+export function riskBandIndex(score: number): number {
+  let band = 0;
+  for (let i = 0; i < RISK_BANDS.length; i++) {
+    if (score >= RISK_BANDS[i]) band = i;
+  }
+  return band;
+}
+
+interface AnchorMemory {
+  at: number;
+  score: number;
+}
+
+const lastAnchor = new Map<string, AnchorMemory>();
+
+export function shouldAnchor(
+  previous: AnchorMemory | undefined,
+  score: number,
+  now: number,
+  interval: number = CONFIG.ONCHAIN_ANCHOR_INTERVAL
+): "first" | "interval" | "band" | null {
+  if (!previous) return "first";
+  if (now - previous.at >= interval) return "interval";
+  if (riskBandIndex(score) !== riskBandIndex(previous.score)) return "band";
+  return null;
+}
+
+/** Tests need to start each case from a fresh anchoring memory. */
+export function resetAnchorMemory(): void {
+  lastAnchor.clear();
+}
+
+/**
+ * After a restart the engine has no memory of what it anchored, so the
+ * dashboard would show an empty on-chain record until the next write. One
+ * read per wallet, once, restores the tail from the chain itself — which
+ * is, after all, the point of having put it there.
+ */
+async function hydrateAnchors(
+  program: ReturnType<typeof getProgram>,
+  wallet: PublicKey
+): Promise<void> {
+  const address = wallet.toBase58();
+  if (hasAnchors(address)) return;
+
+  try {
+    const reporter = program.provider.publicKey!;
+    const snapshots = await fetchWalletSnapshots(program, wallet, reporter);
+    const records: AnchorRecord[] = snapshots.map((s) => ({
+      wallet: s.wallet,
+      reporter: s.reporter,
+      riskScore: s.riskScore,
+      timestamp: s.timestamp,
+      pda: s.publicKey,
+      // The signature is not stored on-chain; the account address is the
+      // durable identifier, and explorers resolve it directly.
+      signature: "",
+      breached: false,
+    }));
+    seedAnchors(address, records);
+
+    const latest = records[records.length - 1];
+    if (latest) {
+      lastAnchor.set(address, {
+        at: latest.timestamp * 1000,
+        score: latest.riskScore,
+      });
+    }
+    if (records.length) {
+      console.log(
+        `⛓️  Restored ${records.length} on-chain snapshot(s) for ` +
+          `${address.slice(0, 8)}…`
+      );
+    }
+  } catch (err) {
+    // Not fatal: the next anchor still lands, and the chain still has the
+    // history. Mark the wallet as looked-at so this is one attempt, not one
+    // per tick.
+    seedAnchors(address, []);
+    console.warn(
+      `⚠️  Could not read on-chain snapshots for ${address.slice(0, 8)}…:`,
+      err instanceof Error ? err.message : err
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
 // MAIN ENGINE
 // ─────────────────────────────────────────────
 
@@ -474,7 +580,6 @@ async function runTick() {
   for (const walletPubkey of wallets) {
     const address = walletPubkey.toBase58();
     const label = getWalletLabel(address);
-    const owned = isWalletOwned(address);
 
     try {
       /* 6a. REAL BALANCES */
@@ -649,15 +754,42 @@ async function runTick() {
         lastAlertTime.delete(address);
       }
 
-      /* 8. RECORD ON-CHAIN */
+      /* 8. ANCHOR ON-CHAIN */
       if (!CONFIG.ENABLE_ONCHAIN_WRITES) {
         console.log(`📊 [${label}] Risk monitored (on-chain writes disabled)`);
-      } else if (owned) {
-        await recordRiskScoreOnChain(program, walletPubkey, hybridRisk);
       } else {
-        console.log(
-          `📊 [${label}] Risk monitored (read-only wallet, skipping on-chain write)`
-        );
+        await hydrateAnchors(program, walletPubkey);
+
+        const now = Date.now();
+        const reason = shouldAnchor(lastAnchor.get(address), hybridRisk, now);
+
+        if (reason) {
+          try {
+            const record = await recordRiskScoreOnChain(
+              program,
+              walletPubkey,
+              hybridRisk
+            );
+            // Remember the attempt either way: a failed write that retried
+            // every 30s would burn the reporter's balance on fees for a
+            // problem — usually rent — that a retry cannot fix.
+            lastAnchor.set(address, { at: now, score: hybridRisk });
+
+            if (record && hasWallet(address)) {
+              recordAnchor(record);
+              console.log(
+                `⛓️  [${label}] Anchored on-chain (${reason})` +
+                  (getAnchors(address).length > 1 ? "" : " — first snapshot")
+              );
+            }
+          } catch (chainErr) {
+            const message =
+              chainErr instanceof Error ? chainErr.message : String(chainErr);
+            lastAnchor.set(address, { at: now, score: hybridRisk });
+            setOnChainError(message);
+            console.error(`❌ [${label}] On-chain write failed: ${message}`);
+          }
+        }
       }
     } catch (walletErr) {
       console.error(

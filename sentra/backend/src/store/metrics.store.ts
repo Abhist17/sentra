@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { CONFIG } from "../config/env";
 import type { AssetSymbol, PriceMap } from "../services/price.service";
+import type { AnchorRecord } from "../services/blockchain.service";
 
 export interface AssetHolding {
   symbol: string;
@@ -102,6 +103,66 @@ export interface MarketState {
 export const walletMetrics: Map<string, WalletMetrics> = new Map();
 
 const riskHistory: Map<string, RiskPoint[]> = new Map();
+
+// ── On-chain anchors ─────────────────────────────────────────────
+// The engine remembers what it anchored, so the dashboard can show the
+// on-chain record without an RPC call per poll. Bounded like the risk
+// series; the full history is always available from the chain itself.
+
+const ANCHORS_KEPT = 50;
+
+const anchors: Map<string, AnchorRecord[]> = new Map();
+
+/** Anchoring state, separate from market state because it changes on a
+ *  different cadence and fails for different reasons. */
+export interface OnChainState {
+  /** Last successful write, across all wallets. */
+  lastAnchoredAt: number;
+  /** Most recent write failure, cleared by the next success. */
+  lastError: string | null;
+}
+
+const onchain: OnChainState = { lastAnchoredAt: 0, lastError: null };
+
+export function recordAnchor(record: AnchorRecord) {
+  const series = anchors.get(record.wallet) ?? [];
+  series.push(record);
+  if (series.length > ANCHORS_KEPT) {
+    series.splice(0, series.length - ANCHORS_KEPT);
+  }
+  anchors.set(record.wallet, series);
+  onchain.lastAnchoredAt = record.timestamp * 1000;
+  onchain.lastError = null;
+}
+
+/** Seeds a wallet's anchors from chain, e.g. after a restart. Newest wins on
+ *  a collision, so hydrating never overwrites a record the engine just made. */
+export function seedAnchors(address: string, records: AnchorRecord[]) {
+  const known = new Set((anchors.get(address) ?? []).map((a) => a.pda));
+  const merged = [
+    ...records.filter((r) => !known.has(r.pda)),
+    ...(anchors.get(address) ?? []),
+  ]
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .slice(-ANCHORS_KEPT);
+  anchors.set(address, merged);
+}
+
+export function hasAnchors(address: string): boolean {
+  return anchors.has(address);
+}
+
+export function getAnchors(address: string): AnchorRecord[] {
+  return anchors.get(address) ?? [];
+}
+
+export function setOnChainError(message: string) {
+  onchain.lastError = message;
+}
+
+export function getOnChainState(): OnChainState {
+  return onchain;
+}
 
 // ── Persistence ──────────────────────────────────────────────────
 // The wallet registry and the price-history cache both survive a restart;
@@ -292,6 +353,7 @@ export function getRiskHistory(address: string): RiskPoint[] {
 export function forgetWallet(address: string) {
   walletMetrics.delete(address);
   riskHistory.delete(address);
+  anchors.delete(address);
   // Flush rather than schedule: removal is rare, user-initiated, and a
   // process killed before the batched write would resurrect the series the
   // user just asked to be rid of.
