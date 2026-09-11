@@ -31,7 +31,21 @@ const idl = {
     spec: "0.1.0",
     description: "Sentra — on-chain risk snapshots for Solana wallets",
   },
+  // Anchor emits instructions, accounts, events and types sorted by name.
   instructions: [
+    {
+      name: "close_preference",
+      discriminator: disc("global", "close_preference"),
+      accounts: [
+        {
+          name: "preference",
+          writable: true,
+          pda: { seeds: [PREFERENCE_SEED, accountSeed("owner")] },
+        },
+        { name: "owner", writable: true, signer: true },
+      ],
+      args: [],
+    },
     {
       name: "close_snapshot",
       discriminator: disc("global", "close_snapshot"),
@@ -76,7 +90,10 @@ const idl = {
     {
       name: "record_risk_score",
       docs: [
-        "Writes an immutable snapshot of `wallet`'s risk score at `timestamp`.",
+        "Writes an immutable snapshot of `wallet`'s risk at `timestamp`: the",
+        "0–100 score, and the portfolio value and Value at Risk behind it in",
+        "USD cents, so the record says not just \"72\" but \"72 on a $50,000 book",
+        "with $3,100 at risk\".",
         "",
         "The reporter signs and pays. When the wallet's owner has registered a",
         "preference, it is passed in read-only and the event says whether the",
@@ -109,6 +126,8 @@ const idl = {
         { name: "wallet", type: "pubkey" },
         { name: "risk_score", type: "u8" },
         { name: "timestamp", type: "i64" },
+        { name: "value_usd_cents", type: "u64" },
+        { name: "var_usd_cents", type: "u64" },
       ],
     },
     {
@@ -180,6 +199,8 @@ const idl = {
           { name: "wallet", type: "pubkey" },
           { name: "reporter", type: "pubkey" },
           { name: "risk_score", type: "u8" },
+          { name: "value_usd_cents", type: "u64" },
+          { name: "var_usd_cents", type: "u64" },
           {
             name: "threshold",
             docs: [
@@ -197,7 +218,7 @@ const idl = {
       name: "RiskSnapshot",
       docs: [
         "One immutable reading: this wallet scored this much at this second,",
-        "according to this reporter.",
+        "according to this reporter, on a book of this size with this much at risk.",
       ],
       type: {
         kind: "struct",
@@ -206,6 +227,16 @@ const idl = {
           { name: "reporter", type: "pubkey" },
           { name: "risk_score", type: "u8" },
           { name: "timestamp", type: "i64" },
+          {
+            name: "value_usd_cents",
+            docs: ["Portfolio value when scored, in USD cents. 0 when not reported."],
+            type: "u64",
+          },
+          {
+            name: "var_usd_cents",
+            docs: ["Headline Value at Risk when scored, in USD cents. 0 when not reported."],
+            type: "u64",
+          },
           { name: "bump", type: "u8" },
         ],
       },

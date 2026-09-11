@@ -147,6 +147,8 @@ function anchor(wallet: string, timestamp: number, score = 40): AnchorRecord {
     reporter: REPORTER.toBase58(),
     riskScore: score,
     timestamp,
+    valueUsd: 50_000,
+    varUsd: 3_100,
     pda: `pda-${wallet}-${timestamp}`,
     signature: `sig-${timestamp}`,
     breached: false,

@@ -13,6 +13,11 @@ const nowSeconds = () => Math.floor(Date.now() / 1000);
 let tick = 0;
 const uniqueTimestamp = () => new anchor.BN(nowSeconds() + tick++);
 
+/** A $50,000 book with $3,100 at risk, in cents — what a snapshot carries
+ *  beside the score so the record is self-describing. */
+const VALUE_CENTS = new anchor.BN(5_000_000);
+const VAR_CENTS = new anchor.BN(310_000);
+
 describe("sentra", () => {
   const provider = anchor.AnchorProvider.env();
   anchor.setProvider(provider);
@@ -227,6 +232,52 @@ describe("sentra", () => {
       );
       expect(pref.threshold).to.equal(70);
     });
+
+    it("lets an owner close their preference and reclaim its rent", async () => {
+      const leaver = anchor.web3.Keypair.generate();
+      await fund(leaver.publicKey);
+      const pda = preferencePdaFor(leaver.publicKey);
+
+      await program.methods
+        .initializePreferences(40, reporter.publicKey)
+        .accounts({ owner: leaver.publicKey })
+        .signers([leaver])
+        .rpc();
+      expect(await provider.connection.getBalance(pda)).to.be.greaterThan(0);
+
+      const before = await provider.connection.getBalance(leaver.publicKey);
+      await program.methods
+        .closePreference()
+        .accounts({ owner: leaver.publicKey })
+        .signers([leaver])
+        .rpc();
+
+      expect(await provider.connection.getAccountInfo(pda)).to.equal(null);
+      expect(await provider.connection.getBalance(leaver.publicKey)).to.be.greaterThan(before);
+    });
+
+    it("blocks anyone else from closing an owner's preference", async () => {
+      const attacker = anchor.web3.Keypair.generate();
+      await fund(attacker.publicKey);
+
+      try {
+        await program.methods
+          .closePreference()
+          .accountsPartial({
+            preference: preferencePdaFor(owner.publicKey),
+            owner: attacker.publicKey,
+          })
+          .signers([attacker])
+          .rpc();
+        expect.fail("Only the owner may close their preference");
+      } catch (err) {
+        expect(err).to.exist;
+      }
+
+      expect(
+        await provider.connection.getAccountInfo(preferencePdaFor(owner.publicKey))
+      ).to.not.equal(null);
+    });
   });
 
   // ------------------------------
@@ -238,7 +289,7 @@ describe("sentra", () => {
       const pda = snapshotPdaFor(scored.publicKey, timestamp);
 
       const sig = await program.methods
-        .recordRiskScore(scored.publicKey, 50, timestamp)
+        .recordRiskScore(scored.publicKey, 50, timestamp, VALUE_CENTS, VAR_CENTS)
         // The scored wallet has no preference — pass null, which the client
         // encodes as the program id, Anchor's "None" for optional accounts.
         .accountsPartial({ preference: null, reporter: reporter.publicKey })
@@ -251,6 +302,8 @@ describe("sentra", () => {
       );
       expect(snapshot.riskScore).to.equal(50);
       expect(snapshot.timestamp.toNumber()).to.equal(timestamp.toNumber());
+      expect(snapshot.valueUsdCents.toNumber()).to.equal(5_000_000);
+      expect(snapshot.varUsdCents.toNumber()).to.equal(310_000);
 
       // No preference means no threshold and no breach — the event still
       // fires so an indexer sees every reading.
@@ -258,6 +311,8 @@ describe("sentra", () => {
       expect(events).to.have.length(1);
       expect(events[0].name).to.equal("riskScoreRecorded");
       expect(events[0].data.riskScore).to.equal(50);
+      expect(events[0].data.valueUsdCents.toNumber()).to.equal(5_000_000);
+      expect(events[0].data.varUsdCents.toNumber()).to.equal(310_000);
       expect(events[0].data.threshold).to.equal(null);
       expect(events[0].data.breached).to.equal(false);
     });
@@ -266,7 +321,7 @@ describe("sentra", () => {
       const timestamp = uniqueTimestamp();
 
       const sig = await program.methods
-        .recordRiskScore(owner.publicKey, 85, timestamp)
+        .recordRiskScore(owner.publicKey, 85, timestamp, VALUE_CENTS, VAR_CENTS)
         // Omitting `preference` lets the client derive the PDA from `wallet`.
         .accounts({ reporter: reporter.publicKey })
         .rpc();
@@ -281,7 +336,7 @@ describe("sentra", () => {
       const timestamp = uniqueTimestamp();
 
       const sig = await program.methods
-        .recordRiskScore(owner.publicKey, 69, timestamp)
+        .recordRiskScore(owner.publicKey, 69, timestamp, VALUE_CENTS, VAR_CENTS)
         .accounts({ reporter: reporter.publicKey })
         .rpc();
 
@@ -297,7 +352,7 @@ describe("sentra", () => {
 
       try {
         await program.methods
-          .recordRiskScore(owner.publicKey, 99, timestamp)
+          .recordRiskScore(owner.publicKey, 99, timestamp, VALUE_CENTS, VAR_CENTS)
           .accounts({ reporter: stranger.publicKey })
           .signers([stranger])
           .rpc();
@@ -317,7 +372,7 @@ describe("sentra", () => {
       // Without invoking the preference, anyone can publish their own
       // reading. The snapshot records who — that is the whole trust model.
       const sig = await program.methods
-        .recordRiskScore(owner.publicKey, 99, timestamp)
+        .recordRiskScore(owner.publicKey, 99, timestamp, VALUE_CENTS, VAR_CENTS)
         .accountsPartial({ preference: null, reporter: stranger.publicKey })
         .signers([stranger])
         .rpc();
@@ -340,14 +395,14 @@ describe("sentra", () => {
       const timestamp = uniqueTimestamp();
 
       await program.methods
-        .recordRiskScore(scored.publicKey, 10, timestamp)
+        .recordRiskScore(scored.publicKey, 10, timestamp, VALUE_CENTS, VAR_CENTS)
         .accountsPartial({ preference: null, reporter: reporter.publicKey })
         .rpc();
 
       // Same wallet, same timestamp, different reporter: a different PDA, so
       // one reporter cannot squat on a slot to block another.
       await program.methods
-        .recordRiskScore(scored.publicKey, 90, timestamp)
+        .recordRiskScore(scored.publicKey, 90, timestamp, VALUE_CENTS, VAR_CENTS)
         .accountsPartial({ preference: null, reporter: other.publicKey })
         .signers([other])
         .rpc();
@@ -367,7 +422,7 @@ describe("sentra", () => {
 
       try {
         await program.methods
-          .recordRiskScore(scored.publicKey, 150, timestamp)
+          .recordRiskScore(scored.publicKey, 150, timestamp, VALUE_CENTS, VAR_CENTS)
           .accountsPartial({ preference: null, reporter: reporter.publicKey })
           .rpc();
         expect.fail("Invalid risk score should fail");
@@ -384,7 +439,7 @@ describe("sentra", () => {
 
       try {
         await program.methods
-          .recordRiskScore(scored.publicKey, 40, timestamp)
+          .recordRiskScore(scored.publicKey, 40, timestamp, VALUE_CENTS, VAR_CENTS)
           .accountsPartial({ preference: null, reporter: reporter.publicKey })
           .rpc();
         expect.fail("Out-of-range timestamp should fail");
@@ -399,13 +454,13 @@ describe("sentra", () => {
       const timestamp = uniqueTimestamp();
 
       await program.methods
-        .recordRiskScore(scored.publicKey, 20, timestamp)
+        .recordRiskScore(scored.publicKey, 20, timestamp, VALUE_CENTS, VAR_CENTS)
         .accountsPartial({ preference: null, reporter: reporter.publicKey })
         .rpc();
 
       try {
         await program.methods
-          .recordRiskScore(scored.publicKey, 80, timestamp)
+          .recordRiskScore(scored.publicKey, 80, timestamp, VALUE_CENTS, VAR_CENTS)
           .accountsPartial({ preference: null, reporter: reporter.publicKey })
           .rpc();
         expect.fail("A snapshot must be immutable once written");
@@ -459,7 +514,7 @@ describe("sentra", () => {
       const pda = snapshotPdaFor(scored.publicKey, timestamp);
 
       await program.methods
-        .recordRiskScore(scored.publicKey, 30, timestamp)
+        .recordRiskScore(scored.publicKey, 30, timestamp, VALUE_CENTS, VAR_CENTS)
         .accountsPartial({ preference: null, reporter: reporter.publicKey })
         .rpc();
 
@@ -486,7 +541,7 @@ describe("sentra", () => {
       const pda = snapshotPdaFor(scored.publicKey, timestamp);
 
       await program.methods
-        .recordRiskScore(scored.publicKey, 35, timestamp)
+        .recordRiskScore(scored.publicKey, 35, timestamp, VALUE_CENTS, VAR_CENTS)
         .accountsPartial({ preference: null, reporter: reporter.publicKey })
         .rpc();
 

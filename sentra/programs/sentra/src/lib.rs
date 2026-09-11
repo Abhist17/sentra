@@ -79,9 +79,19 @@ pub mod sentra {
     }
 
     // -----------------------------------
+    // Owner: reclaim the preference's rent
+    // -----------------------------------
+    pub fn close_preference(_ctx: Context<ClosePreference>) -> Result<()> {
+        Ok(())
+    }
+
+    // -----------------------------------
     // Reporter: anchor a score
     // -----------------------------------
-    /// Writes an immutable snapshot of `wallet`'s risk score at `timestamp`.
+    /// Writes an immutable snapshot of `wallet`'s risk at `timestamp`: the
+    /// 0–100 score, and the portfolio value and Value at Risk behind it in
+    /// USD cents, so the record says not just "72" but "72 on a $50,000 book
+    /// with $3,100 at risk".
     ///
     /// The reporter signs and pays. When the wallet's owner has registered a
     /// preference, it is passed in read-only and the event says whether the
@@ -92,6 +102,8 @@ pub mod sentra {
         wallet: Pubkey,
         risk_score: u8,
         timestamp: i64,
+        value_usd_cents: u64,
+        var_usd_cents: u64,
     ) -> Result<()> {
         require!(risk_score <= MAX_RISK_SCORE, SentraError::InvalidRiskScore);
 
@@ -108,6 +120,8 @@ pub mod sentra {
         snapshot.reporter = reporter;
         snapshot.risk_score = risk_score;
         snapshot.timestamp = timestamp;
+        snapshot.value_usd_cents = value_usd_cents;
+        snapshot.var_usd_cents = var_usd_cents;
         snapshot.bump = ctx.bumps.snapshot;
 
         // A breach is the event worth subscribing to — flag it explicitly
@@ -121,6 +135,8 @@ pub mod sentra {
             wallet,
             reporter,
             risk_score,
+            value_usd_cents,
+            var_usd_cents,
             threshold,
             breached,
             timestamp,
@@ -173,6 +189,20 @@ pub struct UpdatePreferences<'info> {
     )]
     pub preference: Account<'info, RiskPreference>,
 
+    pub owner: Signer<'info>,
+}
+
+#[derive(Accounts)]
+pub struct ClosePreference<'info> {
+    #[account(
+        mut,
+        close = owner,
+        seeds = [RiskPreference::SEED, owner.key().as_ref()],
+        bump = preference.bump,
+    )]
+    pub preference: Account<'info, RiskPreference>,
+
+    #[account(mut)]
     pub owner: Signer<'info>,
 }
 
@@ -261,7 +291,7 @@ impl RiskPreference {
 }
 
 /// One immutable reading: this wallet scored this much at this second,
-/// according to this reporter.
+/// according to this reporter, on a book of this size with this much at risk.
 #[account]
 #[derive(InitSpace)]
 pub struct RiskSnapshot {
@@ -269,6 +299,10 @@ pub struct RiskSnapshot {
     pub reporter: Pubkey,
     pub risk_score: u8,
     pub timestamp: i64,
+    /// Portfolio value when scored, in USD cents. 0 when not reported.
+    pub value_usd_cents: u64,
+    /// Headline Value at Risk when scored, in USD cents. 0 when not reported.
+    pub var_usd_cents: u64,
     pub bump: u8,
 }
 
@@ -287,6 +321,8 @@ pub struct RiskScoreRecorded {
     pub wallet: Pubkey,
     pub reporter: Pubkey,
     pub risk_score: u8,
+    pub value_usd_cents: u64,
+    pub var_usd_cents: u64,
     /// The owner's threshold when they have registered one and named this
     /// reporter; otherwise absent, and `breached` is false.
     pub threshold: Option<u8>,

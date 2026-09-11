@@ -8,6 +8,59 @@
   },
   "instructions": [
     {
+      "name": "close_preference",
+      "discriminator": [
+        125,
+        211,
+        4,
+        198,
+        4,
+        252,
+        147,
+        157
+      ],
+      "accounts": [
+        {
+          "name": "preference",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  114,
+                  105,
+                  115,
+                  107,
+                  95,
+                  112,
+                  114,
+                  101,
+                  102,
+                  101,
+                  114,
+                  101,
+                  110,
+                  99,
+                  101
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "owner"
+              }
+            ]
+          }
+        },
+        {
+          "name": "owner",
+          "writable": true,
+          "signer": true
+        }
+      ],
+      "args": []
+    },
+    {
       "name": "close_snapshot",
       "discriminator": [
         10,
@@ -141,7 +194,10 @@
     {
       "name": "record_risk_score",
       "docs": [
-        "Writes an immutable snapshot of `wallet`'s risk score at `timestamp`.",
+        "Writes an immutable snapshot of `wallet`'s risk at `timestamp`: the",
+        "0–100 score, and the portfolio value and Value at Risk behind it in",
+        "USD cents, so the record says not just \"72\" but \"72 on a $50,000 book",
+        "with $3,100 at risk\".",
         "",
         "The reporter signs and pays. When the wallet's owner has registered a",
         "preference, it is passed in read-only and the event says whether the",
@@ -251,6 +307,14 @@
         {
           "name": "timestamp",
           "type": "i64"
+        },
+        {
+          "name": "value_usd_cents",
+          "type": "u64"
+        },
+        {
+          "name": "var_usd_cents",
+          "type": "u64"
         }
       ]
     },
@@ -437,6 +501,14 @@
             "type": "u8"
           },
           {
+            "name": "value_usd_cents",
+            "type": "u64"
+          },
+          {
+            "name": "var_usd_cents",
+            "type": "u64"
+          },
+          {
             "name": "threshold",
             "docs": [
               "The owner's threshold when they have registered one and named this",
@@ -461,7 +533,7 @@
       "name": "RiskSnapshot",
       "docs": [
         "One immutable reading: this wallet scored this much at this second,",
-        "according to this reporter."
+        "according to this reporter, on a book of this size with this much at risk."
       ],
       "type": {
         "kind": "struct",
@@ -481,6 +553,20 @@
           {
             "name": "timestamp",
             "type": "i64"
+          },
+          {
+            "name": "value_usd_cents",
+            "docs": [
+              "Portfolio value when scored, in USD cents. 0 when not reported."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "var_usd_cents",
+            "docs": [
+              "Headline Value at Risk when scored, in USD cents. 0 when not reported."
+            ],
+            "type": "u64"
           },
           {
             "name": "bump",

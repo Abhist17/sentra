@@ -331,6 +331,8 @@ async function hydrateAnchors(
       reporter: s.reporter,
       riskScore: s.riskScore,
       timestamp: s.timestamp,
+      valueUsd: s.valueUsd,
+      varUsd: s.varUsd,
       pda: s.publicKey,
       // The signature is not stored on-chain; the account address is the
       // durable identifier, and explorers resolve it directly.
@@ -768,7 +770,9 @@ async function runTick() {
             const record = await recordRiskScoreOnChain(
               program,
               walletPubkey,
-              hybridRisk
+              hybridRisk,
+              portfolioValue,
+              risk.headlineVarUsd
             );
             // Remember the attempt either way: a failed write that retried
             // every 30s would burn the reporter's balance on fees for a

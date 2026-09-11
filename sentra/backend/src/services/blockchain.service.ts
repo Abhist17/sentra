@@ -397,6 +397,10 @@ export interface AnchorRecord {
   riskScore: number;
   /** Unix seconds, as stored on-chain. */
   timestamp: number;
+  /** Portfolio value when scored, USD. */
+  valueUsd: number;
+  /** Headline Value at Risk when scored, USD. */
+  varUsd: number;
   /** Snapshot account address. */
   pda: string;
   /** Transaction signature, for an explorer link. */
@@ -405,10 +409,20 @@ export interface AnchorRecord {
   breached: boolean;
 }
 
+/** USD → whole cents as a u64, clamped to what the program can store. */
+function toCents(usd: number): anchor.BN {
+  if (!Number.isFinite(usd) || usd <= 0) return new anchor.BN(0);
+  // Round to the cent before converting: BN has no fractional part, and
+  // Math.round on the cents figure avoids 0.1 + 0.2 style drift.
+  return new anchor.BN(Math.round(usd * 100).toString());
+}
+
 export async function recordRiskScoreOnChain(
   program: anchor.Program,
   wallet: PublicKey,
-  riskScore: number
+  riskScore: number,
+  valueUsd = 0,
+  varUsd = 0
 ): Promise<AnchorRecord | null> {
   const reporter = program.provider.publicKey!;
 
@@ -451,7 +465,13 @@ export async function recordRiskScoreOnChain(
   } as unknown as Record<string, PublicKey>;
 
   const signature = await program.methods
-    .recordRiskScore(wallet, score, timestampBN)
+    .recordRiskScore(
+      wallet,
+      score,
+      timestampBN,
+      toCents(valueUsd),
+      toCents(varUsd)
+    )
     .accountsPartial(accounts)
     .rpc();
 
@@ -472,6 +492,8 @@ export async function recordRiskScoreOnChain(
     reporter: reporter.toBase58(),
     riskScore: score,
     timestamp,
+    valueUsd: toCents(valueUsd).toNumber() / 100,
+    varUsd: toCents(varUsd).toNumber() / 100,
     pda: snapshotPda.toBase58(),
     signature,
     breached,
@@ -484,6 +506,8 @@ export interface OnChainSnapshot {
   reporter: string;
   riskScore: number;
   timestamp: number;
+  valueUsd: number;
+  varUsd: number;
 }
 
 /**
@@ -514,6 +538,8 @@ export async function fetchWalletSnapshots(
       reporter: s.account.reporter.toBase58(),
       riskScore: s.account.riskScore,
       timestamp: s.account.timestamp.toNumber(),
+      valueUsd: s.account.valueUsdCents.toNumber() / 100,
+      varUsd: s.account.varUsdCents.toNumber() / 100,
     }))
     .sort((a: OnChainSnapshot, b: OnChainSnapshot) => a.timestamp - b.timestamp);
 }

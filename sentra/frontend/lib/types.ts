@@ -71,6 +71,10 @@ export interface AnchorRecord {
   riskScore: number;
   /** Unix seconds, as stored on-chain. */
   timestamp: number;
+  /** Portfolio value when scored, USD. */
+  valueUsd: number;
+  /** Headline Value at Risk when scored, USD. */
+  varUsd: number;
   /** Snapshot account address. */
   pda: string;
   /** Transaction signature; empty when restored from chain after a restart. */
@@ -150,6 +154,8 @@ export interface Snapshot {
   reporter: string;
   riskScore: number;
   timestamp: number;
+  valueUsd: number;
+  varUsd: number;
   /** Written by the engine's own reporter key. */
   trusted: boolean;
 }

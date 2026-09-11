@@ -20,8 +20,9 @@ import {
 import { CONFIG } from "./config/env";
 import { getWalletCount } from "./services/wallet.registry";
 
-/** 8-byte discriminator + RiskSnapshot::INIT_SPACE (32 + 32 + 1 + 8 + 1). */
-const SNAPSHOT_ACCOUNT_BYTES = 8 + 74;
+/** 8-byte discriminator + RiskSnapshot::INIT_SPACE
+ *  (32 + 32 + 1 + 8 + 8 + 8 + 1). */
+const SNAPSHOT_ACCOUNT_BYTES = 8 + 90;
 
 async function main() {
   // Fail loudly and early when no signer is configured — the old script got
