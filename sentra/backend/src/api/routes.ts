@@ -235,6 +235,8 @@ export function registerRoutes(app: Express) {
   // /history — inlining all of it here made the 10s poll grow toward a
   // megabyte once several wallets had filled their ring buffers.
   const OVERVIEW_HISTORY_POINTS = 120;
+  // Anchors likewise: the panel shows a handful, /snapshots has the rest.
+  const OVERVIEW_ANCHORS = 20;
 
   app.get("/overview", (_req, res) => {
     const market = getMarket();
@@ -242,7 +244,7 @@ export function registerRoutes(app: Express) {
       ...w,
       metrics: getWalletMetrics(w.address),
       history: getRiskHistory(w.address).slice(-OVERVIEW_HISTORY_POINTS),
-      anchors: getAnchors(w.address),
+      anchors: getAnchors(w.address).slice(-OVERVIEW_ANCHORS),
     }));
 
     res.json({

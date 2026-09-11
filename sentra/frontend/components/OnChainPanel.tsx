@@ -126,8 +126,8 @@ export function OnChainPanel({
 
       {onchain.enabled && recent.length > SHOWN && (
         <p className="mt-2 text-[11px] text-tertiary">
-          {recent.length - SHOWN} older on this engine, the full series on
-          the chain.
+          {recent.length - SHOWN} more recent on this engine; the full series
+          is on the chain.
         </p>
       )}
 
