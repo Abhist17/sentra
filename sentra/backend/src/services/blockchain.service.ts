@@ -465,16 +465,25 @@ export async function recordRiskScoreOnChain(
     reporter,
   } as unknown as Record<string, PublicKey>;
 
-  const signature = await program.methods
-    .recordRiskScore(
-      wallet,
-      score,
-      timestampBN,
-      toCents(valueUsd),
-      toCents(varUsd)
-    )
-    .accountsPartial(accounts)
-    .rpc();
+  let signature: string;
+  try {
+    signature = await program.methods
+      .recordRiskScore(
+        wallet,
+        score,
+        timestampBN,
+        toCents(valueUsd),
+        toCents(varUsd)
+      )
+      .accountsPartial(accounts)
+      .rpc();
+  } catch (err) {
+    // An owner can rename their reporter or close their preference at any
+    // time; the cached "usable" answer would then fail every write until it
+    // expired. Forget it so the next attempt re-reads the chain.
+    if (withPreference) preferenceCache.delete(wallet.toBase58());
+    throw err;
+  }
 
   let breached = false;
   if (withPreference) {

@@ -369,6 +369,11 @@ async function hydrateAnchors(
   const address = wallet.toBase58();
   if (hasAnchors(address)) return;
 
+  // No anchors known means a wallet the engine has not seen this process —
+  // or one removed and added back, whose old memory would otherwise decide
+  // when its next snapshot is due.
+  lastAnchor.delete(address);
+
   try {
     const reporter = program.provider.publicKey!;
     const snapshots = await fetchWalletSnapshots(program, wallet, reporter);
