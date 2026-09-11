@@ -8,6 +8,11 @@ skip-lint = false
 [programs.localnet]
 sentra = "6n6DZhiPwhYxiBLaRn9kYSW2s7WvWiVwDmciG2jP2Aoj"
 
+# Deployed 2026-09-12 with `--max-len 300000`; IDL published on-chain at
+# 5jkpCiZnMhniAXh5PBYVTYT3tMJsPAsbQtsahZ9wwmB1 so explorers decode accounts.
+[programs.devnet]
+sentra = "6n6DZhiPwhYxiBLaRn9kYSW2s7WvWiVwDmciG2jP2Aoj"
+
 [registry]
 url = "https://api.apr.dev"
 
