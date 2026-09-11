@@ -110,9 +110,13 @@ services:
       - key: COINGECKO_API_KEY
         sync: false
 
-      # Writing snapshots on-chain rents a new account per interval, so it
-      # costs SOL continuously. Requires SOLANA_SECRET_KEY.
+      # Anchoring scores on-chain rents a snapshot account (~0.0015 SOL) per
+      # write, paid by SOLANA_SECRET_KEY's wallet — the "reporter". Writes
+      # land hourly per wallet plus one whenever the score crosses a risk
+      # band. Devnet by default (RPC_URL above), so the cost is airdrop SOL.
       - key: ENABLE_ONCHAIN_WRITES
         value: "false"
+      - key: ONCHAIN_ANCHOR_INTERVAL
+        value: "3600000"
       - key: SOLANA_SECRET_KEY
         sync: false

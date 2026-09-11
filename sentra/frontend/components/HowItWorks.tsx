@@ -169,6 +169,27 @@ export function HowItWorks({
           </p>
         </Section>
 
+        <Section title="On the chain">
+          <p className="text-[12px] leading-relaxed text-tertiary">
+            With anchoring on, the engine writes each wallet&rsquo;s score,
+            exposure and Value at Risk to the Sentra program on Solana &mdash;
+            hourly, and the moment the score crosses a band. Each snapshot
+            names the key that wrote it, so a reading in the{" "}
+            <span className="text-secondary">On-chain record</span> panel is
+            something you open on Solana Explorer, not something you take our
+            word for.
+          </p>
+        </Section>
+
+        <Section title="Correlation">
+          <p className="text-[12px] leading-relaxed text-tertiary">
+            The grid shows how the assets have moved together over the last
+            30 days, on the same weighting the loss model uses. Pairs near
+            1.00 are one bet wearing two names; the diversification ratio is
+            what that does to a book.
+          </p>
+        </Section>
+
         <Section title="Keyboard">
           <ul className="space-y-1.5" role="list">
             {KEYS.map((row) => (

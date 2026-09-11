@@ -2,16 +2,18 @@
 
 # Sentra
 
-**A portfolio risk engine for Solana.**
+**A portfolio risk engine for Solana — with a record you can verify on-chain.**
 
 Your wallet balance tells you what you have.
-Sentra tells you how much you stand to lose.
+Sentra tells you how much you stand to lose, and writes it down where nobody can edit it.
 
-[**Open the dashboard →**](https://abhist17.github.io/sentra/)
+[**Open the dashboard →**](https://abhist17.github.io/sentra/) ·
+[**Program on devnet →**](https://explorer.solana.com/address/6n6DZhiPwhYxiBLaRn9kYSW2s7WvWiVwDmciG2jP2Aoj?cluster=devnet) ·
+[What's new in v2](CHANGELOG.md)
 
 </div>
 
-![The Sentra dashboard: a blended risk dial reading 33.7, portfolio exposure and Value at Risk, a live risk trend, and the holdings behind it](docs/dashboard.png)
+![The Sentra dashboard: a blended risk dial, portfolio exposure and Value at Risk, a live risk trend with on-chain anchors marked, the holdings behind it, and the on-chain record](docs/dashboard.png)
 
 <div align="center">
 <sub>Two books holding roughly the same value — and carrying very different
@@ -32,7 +34,9 @@ evenly across four assets with low correlation. One sitting 97% in a single
 volatile token. Same balance, very different night's sleep.
 
 Sentra measures that difference continuously, using the same model a trading desk
-would use — **Value at Risk** — and turns it into one number between 0 and 100.
+would use — **Value at Risk** — turns it into one number between 0 and 100, and
+anchors that number on Solana so a claim about past risk is checkable rather than
+trusted.
 
 ---
 
@@ -41,7 +45,8 @@ would use — **Value at Risk** — and turns it into one number between 0 and 1
 Every 30 seconds, for every wallet you monitor:
 
 1. **Prices the book.** Reads real SOL and SPL token balances from Solana
-   mainnet, values them against live CoinGecko quotes.
+   mainnet across ten assets — SOL, JitoSOL, USDC, USDT, JUP, BONK, WIF, JTO,
+   PYTH, RAY — and values them against live CoinGecko quotes.
 2. **Computes Value at Risk and Expected Shortfall.** Builds an
    exponentially-weighted covariance matrix from 30 days of price history and
    derives both the 95% one-day VaR — the loss exceeded on about one day in
@@ -51,8 +56,10 @@ Every 30 seconds, for every wallet you monitor:
    assets falling together, and combines them into a systemic stress score.
 4. **Blends them into one score.** VaR plus penalties for concentration, a
    falling lead asset, and market stress — capped at 100.
-5. **Acts on it.** Sends a Telegram alert above your threshold, and optionally
-   writes an immutable snapshot to a Solana program.
+5. **Acts on it.** Sends a Telegram alert above your threshold, and anchors the
+   score, the book's value and its VaR to the Sentra program as an immutable,
+   timestamped snapshot — every hour, and the moment the score crosses a risk
+   band.
 
 ```
 Solana mainnet ──┐
@@ -60,7 +67,7 @@ Solana mainnet ──┐
 CoinGecko feed ──┘           │                    │
                              │                    ├──▶  Telegram alert
                    30-day covariance              │
-                   + live stress signals          └──▶  on-chain snapshot
+                   + live stress signals          └──▶  on-chain snapshot (devnet)
 ```
 
 ---
@@ -117,6 +124,15 @@ It also reports a **diversification ratio**: weighted average standalone
 volatility over portfolio volatility. At 1.0 the holdings move as one and
 spreading across tickers is buying nothing.
 
+### Why the ratio is what it is
+
+The dashboard shows the **correlation matrix** behind the covariance — the
+same exponentially-weighted estimate the loss model uses, not a prettier one
+computed some other way. A wallet holding SOL and JitoSOL sees the pair at
+0.99 and understands, without being told, why its five tickers behave like
+one position. The selected wallet's own holdings are foregrounded and its most
+correlated pair is named.
+
 ### How the loss estimate is built
 
 Two models run on every tick, and the dashboard shows both:
@@ -154,6 +170,113 @@ Three details that matter more than they sound:
 
 ---
 
+## The on-chain record
+
+Every other part of Sentra asks you to trust the engine. This part is where
+you stop having to.
+
+The engine anchors each wallet's score on Solana as a **snapshot account**
+holding the score, the portfolio value and the Value at Risk at that second,
+written by a key anyone can check. A claim like *"this wallet scored 72 on a
+$50,000 book with $3,100 at risk at 14:03 on Tuesday"* becomes something you
+open, not something you believe.
+
+**Program:** [`6n6DZhiPwhYxiBLaRn9kYSW2s7WvWiVwDmciG2jP2Aoj`](https://explorer.solana.com/address/6n6DZhiPwhYxiBLaRn9kYSW2s7WvWiVwDmciG2jP2Aoj?cluster=devnet)
+on devnet, IDL published on-chain so the explorer decodes every account.
+
+### Two roles, one trust model
+
+| Role | Who | What they can do |
+|:--|:--|:--|
+| **Reporter** | The engine's signing key | Anchor a snapshot for **any** wallet, and pay its rent |
+| **Owner** | A wallet being scored | Nothing required. Optionally register a threshold and name the one reporter they trust |
+
+A snapshot permanently records which reporter wrote it, and its address is
+derived from the reporter *and* the wallet *and* the second — so two
+reporters can never collide, nobody can squat on another reporter's slot, and
+verification is one key comparison: *is the reporter field the engine's
+published key?* Anyone may write a snapshot about any wallet. Nobody can write
+one as someone else.
+
+When an owner has registered a preference naming the reporter, the reporter's
+snapshots emit a `RiskScoreRecorded` event with `breached: true` whenever the
+score meets the owner's threshold. That event is what an on-chain consumer —
+a vault, a lending market, a bot — should subscribe to. A reporter the owner
+did not name cannot invoke their threshold at all.
+
+### What gets written, and when
+
+Anchoring every 30-second score would rent ~2,900 accounts a day per wallet.
+Instead, a snapshot is written:
+
+- on the engine's first reading of a wallet,
+- every hour after that (`ONCHAIN_ANCHOR_INTERVAL`), and
+- **the moment the score crosses a risk band** — the readings worth being able
+  to prove later. A crossing has to clear the boundary by two points, so a
+  wallet twitching at 44.9 / 45.1 does not spend rent on noise.
+
+Each snapshot costs about 0.0015 SOL of rent; `close_snapshot` reclaims it.
+Anchored readings are marked on the dashboard's trend chart and listed in the
+**On-chain record** panel with links to the transaction and the account.
+
+### Verify one yourself
+
+```bash
+# What to verify against: program, cluster, and this engine's reporter key
+curl https://your-engine/onchain
+# {"enabled":true,"programId":"6n6DZhiP…","cluster":"devnet","reporter":"4u8ckM2U…",…}
+
+# Every snapshot this engine anchored for a wallet, read back from the chain
+curl "https://your-engine/snapshots?wallet=9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+# {"snapshots":[{"publicKey":"5dxA6JF1…","riskScore":25,"valueUsd":972542906.93,
+#   "varUsd":51756208.27,"timestamp":1789165729,"reporter":"4u8ckM2U…","trusted":true}],…}
+
+# Or skip the engine entirely
+solana account 5dxA6JF1yaLmRWbC9GoEokhYszhVLcfgSeZE9Pqf3u3n --url devnet
+```
+
+`/snapshots?wallet=…&all=1` widens the read to every reporter that has ever
+scored the wallet, each row saying who.
+
+### Instructions
+
+| Instruction | Signer | Purpose |
+|:--|:--|:--|
+| `record_risk_score(wallet, score, timestamp, value_usd_cents, var_usd_cents)` | reporter | Writes a snapshot; emits `RiskScoreRecorded` |
+| `close_snapshot()` | reporter | Closes a snapshot and refunds its rent |
+| `initialize_preferences(threshold, reporter)` | owner | Registers a threshold and the trusted reporter |
+| `update_preferences(threshold, reporter)` | owner | Changes either |
+| `close_preference()` | owner | Reclaims the preference's rent |
+
+The timestamp is client-supplied so the address is derivable before the
+write, and checked against the cluster clock (±15 minutes) so nobody can mint
+snapshots at arbitrary points in a wallet's history.
+
+### Run it against your own engine
+
+```bash
+cd sentra/backend
+npm run init                 # checks the program is deployed and the reporter is funded
+# then in .env:
+ENABLE_ONCHAIN_WRITES=true
+RPC_URL=https://api.devnet.solana.com
+```
+
+To register a threshold for a wallet you hold, sign with that wallet's key:
+
+```bash
+npm run preferences -- --threshold 60 --reporter <the engine's reporter key>
+npm run preferences -- --show
+```
+
+To deploy your own copy of the program: `anchor build && anchor deploy
+--provider.cluster devnet` in `sentra/`, then `anchor idl init` so explorers can
+decode it. `anchor build` regenerates `backend/src/idl/sentra.json`; without
+the SBF toolchain, `node scripts/gen-idl.js` reproduces it byte for byte, and
+CI fails if the bundled copy has drifted from the program.
+
+---
+
 ## Try it
 
 **Hosted dashboard:** [abhist17.github.io/sentra](https://abhist17.github.io/sentra/)
@@ -175,7 +298,10 @@ npm run dev          # engine on http://localhost:4000
 Then open the hosted dashboard and use **Connect to an engine** → `http://localhost:4000`.
 
 No API keys, no wallet, no Solana toolchain required — the engine runs read-only
-out of the box and ships with a demo wallet already monitored.
+out of the box and ships with a demo wallet already monitored. The first run
+fetches 30 days of history for ten assets, which takes about a minute at the
+public feed's pace; prices and market stress show immediately, scoring starts
+when the series land, and every later start scores at once from cache.
 
 > Browsers block a page served over HTTPS from calling a loopback address
 > unless the server opts in. The engine sends the required
@@ -203,8 +329,8 @@ The repo includes a [`render.yaml`](render.yaml) blueprint.
 2. Accept the defaults — every secret is optional
 3. Copy the resulting URL, e.g. `https://sentra-engine.onrender.com`
 
-The blueprint provisions a persistent disk for the wallet registry and price
-cache, generates an `API_KEY` for the write routes, and sets a health check.
+The blueprint provisions the service, generates an `API_KEY` for the write
+routes, and sets a health check.
 
 > Render's free tier sleeps after inactivity, so the first request after a
 > quiet period takes a few seconds and the risk history starts fresh.
@@ -218,6 +344,7 @@ cache, generates an `API_KEY` for the write routes, and sets a health check.
 | `ALLOW_PRIVATE_NETWORK` | Leave `true` only if you drive this engine from a page on another origin. |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Enables alerts. |
 | `COINGECKO_API_KEY` | Raises the price-feed rate limit. |
+| `ENABLE_ONCHAIN_WRITES` + `SOLANA_SECRET_KEY` | Anchors scores on-chain. Costs the reporter rent — see above. |
 
 ### Dashboard → GitHub Pages
 
@@ -243,7 +370,13 @@ Built as a working instrument rather than a landing page.
 
 - **Colour carries meaning, nothing else.** The interface is monochrome; colour
   appears only for risk band and asset allocation. When something is coloured on
-  screen, it is telling you something.
+  screen, it is telling you something. The correlation grid is deliberately
+  grey: a correlation is neither a risk nor an asset.
+- **The on-chain record links out, not in.** Each anchored reading is a row
+  with the score, the book, the VaR, and links to the transaction and account
+  on Solana Explorer. The panel names the program and reporter to verify
+  against rather than asking to be believed. Anchored points are marked on the
+  trend chart.
 - **Keyboard-first.** `j`/`k` or arrows move between wallets, `/` adds one. The
   trend chart takes focus too — left/right step through the series, home/end
   jump to either end.
@@ -255,9 +388,9 @@ Built as a working instrument rather than a landing page.
   now, the shape says which is getting worse.
 - **Every figure is traceable.** The score breakdown shows exactly which
   component contributed what.
-- **Honest states.** A degraded price feed, a stale tick, an engine error and
-  incomplete return coverage each say so explicitly rather than rendering a
-  confident-looking number.
+- **Honest states.** A degraded price feed, a stale tick, an engine error, a
+  failed anchor and incomplete return coverage each say so explicitly rather
+  than rendering a confident-looking number.
 - **Announced, not just coloured.** Risk-band and engine-state changes reach a
   live region, so the transitions colour carries are not sighted-only.
 - Light and dark, following your system preference.
@@ -271,18 +404,18 @@ Built as a working instrument rather than a landing page.
 flowchart LR
     subgraph feeds["External data"]
         direction TB
-        CG["CoinGecko<br/>live quotes + 30-day history"]
+        CG["CoinGecko<br/>live quotes + 30-day history<br/>for ten assets"]
         RPC["Solana mainnet RPC<br/>SOL and SPL token balances"]
     end
 
     subgraph engine["Sentra engine — Node, Express, TypeScript"]
         direction TB
-        PRICE["price.service<br/>retry, cache, measures<br/>the sampling interval"]
-        CHAIN["blockchain.service<br/>balance reads, snapshot writes"]
-        LOOP["risk.engine<br/>tick loop, stress signals,<br/>blended score"]
-        QUANT["risk.service — quant core<br/>EWMA covariance, VaR,<br/>Expected Shortfall,<br/>Euler attribution, concentration"]
-        STORE["metrics.store<br/>ring buffer, risk history"]
-        REST["REST API<br/>/overview, /health, /ready"]
+        PRICE["price.service<br/>asset table, retry, cache,<br/>measures the sampling interval"]
+        CHAIN["blockchain.service<br/>balance reads,<br/>snapshot writes as reporter"]
+        LOOP["risk.engine<br/>tick loop, stress signals,<br/>blended score, anchoring policy"]
+        QUANT["risk.service — quant core<br/>EWMA covariance + correlation,<br/>VaR, Expected Shortfall,<br/>Euler attribution, concentration"]
+        STORE["metrics.store<br/>ring buffers: risk history,<br/>on-chain anchors"]
+        REST["REST API<br/>/overview, /onchain,<br/>/snapshots, /health, /ready"]
         DISK[("DATA_DIR<br/>registry, price cache,<br/>risk history")]
     end
 
@@ -290,7 +423,7 @@ flowchart LR
         direction TB
         DASH["Dashboard<br/>Next.js static export<br/>on GitHub Pages"]
         TG["Telegram alert"]
-        PROG["Anchor program on devnet<br/>immutable risk snapshot"]
+        PROG["Sentra program on devnet<br/>RiskSnapshot accounts,<br/>RiskScoreRecorded events"]
     end
 
     CG --> PRICE
@@ -306,12 +439,14 @@ flowchart LR
     REST --> DASH
     LOOP --> TG
     CHAIN --> PROG
+    PROG -.->|read back| CHAIN
 ```
 
 Two clusters, deliberately. Balances are **read** from mainnet, because that is
 where the money is. Snapshots are **written** to devnet, because anchoring a
-score should not cost mainnet rent to demonstrate. The quant core is pure —
-no network, no clock, no I/O — which is why it is the part with the most tests.
+score should not cost mainnet rent to demonstrate — and the program is one
+`anchor deploy` from either. The quant core is pure — no network, no clock,
+no I/O — which is why it is the part with the most tests.
 
 ### What happens in one tick
 
@@ -324,12 +459,13 @@ sequenceDiagram
     participant Q as quant core
     participant S as metrics.store
     participant A as Telegram
+    participant X as Sentra program
 
     T->>P: fetch live quotes
     P-->>T: prices, or last good ones flagged stale
     Note over T: rapid drops, volatility spikes and<br/>correlated drawdowns become a stress score
-    T->>P: refresh 30-day history (hourly)
-    P-->>T: series + measured sampling interval
+    T-)P: refresh 30-day history if stale (runs beside the tick)
+    P-->>T: series + measured sampling interval + correlation
 
     loop each monitored wallet
         T->>C: read SOL and SPL balances
@@ -338,6 +474,12 @@ sequenceDiagram
         Q-->>T: VaR, ES, attribution, concentration
         Note over T: blend into one score, 0-100
         T->>S: write metrics and one history point
+        alt first reading, hourly, or band crossed
+            T->>C: anchor score, value, VaR
+            C->>X: record_risk_score as reporter
+            X-->>C: snapshot account + signature
+            C-->>S: remember the anchor
+        end
     end
 
     alt score above threshold
@@ -346,7 +488,9 @@ sequenceDiagram
 ```
 
 A tick that overruns skips the next slot rather than overlapping it, and a
-wallet removed mid-tick is discarded rather than written back.
+wallet removed mid-tick is discarded rather than written back. A failed
+anchor is reported on the dashboard and not retried until the next scheduled
+one — a problem rent can cause, a retry every 30 seconds cannot fix.
 
 ### What a user does
 
@@ -365,13 +509,13 @@ flowchart TD
 
     ADD --> TICK["Next tick prices the wallet"]
     BROWSE --> SCORE
-    TICK --> SCORE["VaR, Expected Shortfall,<br/>risk attribution, blended score"]
+    TICK --> SCORE["VaR, Expected Shortfall,<br/>risk attribution, correlation,<br/>blended score"]
 
     SCORE --> READ["See where the risk is,<br/>not just where the value is"]
     SCORE --> ALERT{"Above the<br/>alert threshold?"}
     ALERT -- yes --> TG["Telegram alert"]
     ALERT -- no --> WATCH["Keep watching"]
-    SCORE -.-> SNAP["Optional: anchor the score on-chain"]
+    SCORE --> SNAP["Anchored on-chain:<br/>open the account, check the reporter"]
 ```
 
 ### Repository layout
@@ -381,19 +525,22 @@ sentra/
 ├── sentra/
 │   ├── frontend/            Next.js dashboard (static export)
 │   │   ├── app/                 page + design tokens
-│   │   ├── components/          dial, trend chart, tables, panels
-│   │   └── lib/                 API client, formatting, theming
+│   │   ├── components/          dial, trend chart, tables, on-chain record, correlation
+│   │   └── lib/                 API client, formatting, explorer links, theming
 │   │
 │   ├── backend/             Express API + quant engine
-│   │   ├── src/engine/          risk.engine.ts — the tick loop
-│   │   ├── src/services/        prices, risk math, chain, telegram, registry
-│   │   ├── src/store/           in-memory metrics + risk history
-│   │   └── src/__tests__/       unit tests for the quant core
+│   │   ├── src/engine/          risk.engine.ts — the tick loop and anchoring policy
+│   │   ├── src/services/        asset table + prices, risk math, chain, telegram, registry
+│   │   ├── src/store/           in-memory metrics, risk history, anchors
+│   │   ├── src/init.ts          on-chain pre-flight (npm run init)
+│   │   ├── src/preferences.ts   owner CLI for thresholds (npm run preferences)
+│   │   └── src/__tests__/       unit tests for the quant core, API, store, anchoring
 │   │
 │   ├── programs/sentra/     Anchor program (Rust)
-│   ├── tests/               Anchor integration tests
-│   └── scripts/gen-idl.js   regenerates the bundled IDL
+│   ├── tests/               Anchor integration tests (20 cases on a local validator)
+│   └── scripts/gen-idl.js   regenerates the bundled IDL; --check guards drift in CI
 │
+├── docs/                    screenshot, submission notes, capstone papers
 ├── render.yaml              engine blueprint
 └── docker-compose.yml       full local stack
 ```
@@ -402,7 +549,7 @@ sentra/
 |:--|:--|
 | Dashboard | Next.js 16 · React 19 · Tailwind CSS 4 |
 | Engine | Node.js · Express 5 · TypeScript |
-| Program | Rust · Anchor 0.32 |
+| Program | Rust · Anchor 0.32 · deployed on devnet |
 | Price feed | CoinGecko |
 | Alerts | Telegram Bot API |
 
@@ -414,17 +561,19 @@ The engine is a plain REST service — the dashboard is only one possible client
 
 | Method | Route | Purpose |
 |:--|:--|:--|
-| `GET` | `/health` | Liveness, build version, engine state, feature flags |
+| `GET` | `/health` | Liveness, build version, engine state, on-chain summary |
 | `GET` | `/ready` | Readiness — 503 with the failing checks when not scoring |
 | `GET` | `/overview` | Everything the dashboard needs, in one call |
+| `GET` | `/onchain` | Program id, cluster, reporter key, anchoring cadence, last error |
+| `GET` | `/snapshots?wallet=&all=` | On-chain snapshots read back from the chain; `all=1` includes other reporters |
+| `GET` | `/preferences?wallet=` | A wallet owner's on-chain threshold and named reporter |
 | `GET` | `/risk` | Value-weighted risk across all wallets |
 | `GET` | `/portfolio` | Total exposure and aggregate VaR |
-| `GET` | `/prices` · `/market` | Live quotes, per-tick changes, stress signals |
+| `GET` | `/prices` · `/market` | Live quotes, per-tick changes, stress signals, correlation |
 | `GET` | `/history?wallet=` | Risk series, persisted across restarts |
 | `GET` | `/wallets` | Monitored wallets with their latest metrics |
 | `POST` | `/wallet/add` | `{ address, label? }` |
 | `DELETE` | `/wallet/remove` | `{ address }` or `?address=` |
-| `GET` | `/snapshots?wallet=` | On-chain snapshot history |
 | `POST` | `/test/alert` · `/test/shock` | Send a test Telegram message |
 
 Write routes require an `x-api-key` header whenever `API_KEY` is set. All routes
@@ -444,37 +593,6 @@ curl https://your-engine.onrender.com/risk
 
 ---
 
-## The on-chain program
-
-Risk scores can be committed to Solana as immutable, timestamped snapshots — so
-a claim about historical risk is verifiable rather than trusted.
-
-| Instruction | Purpose |
-|:--|:--|
-| `initialize_preferences(threshold)` | Creates the caller's risk-preference PDA |
-| `update_threshold(new_threshold)` | Changes the alert threshold |
-| `record_risk_score(score, timestamp)` | Writes a snapshot, emits `RiskAlertEvent` |
-| `close_snapshot()` | Closes a snapshot and refunds its rent |
-
-```bash
-cd sentra
-anchor build
-anchor deploy --provider.cluster devnet
-cd backend && npm run init      # creates the risk-preference PDA
-```
-
-Then set `ENABLE_ONCHAIN_WRITES=true` and point `RPC_URL` at devnet.
-
-**This is off by default and should stay off unless you want it.** Every
-snapshot rents a new account, so writing on a 30-second interval costs SOL
-continuously. `close_snapshot` exists to reclaim that rent.
-
-> `anchor build` regenerates `backend/src/idl/sentra.json`. If the Solana
-> platform tools cannot be downloaded, `node scripts/gen-idl.js` reproduces a
-> byte-identical IDL from the program source.
-
----
-
 ## Development
 
 ```bash
@@ -486,22 +604,25 @@ npm run dev:frontend     # dashboard → :3000
 
 npm test                 # backend + frontend
 npm run typecheck        # both packages
-anchor test              # program integration tests
+anchor test              # program integration tests on a local validator
 ```
 
 ### Tests
 
-144 tests, none of which need the network.
+191 tests. The 171 off-chain ones need no network; the 20 program tests run
+against a local validator that `anchor test` starts for you.
 
 | Suite | Count | Covers |
 |:--|--:|:--|
-| Quant core | 40 | Horizon scaling, EWMA, VaR/ES, historical simulation, Euler attribution, concentration |
-| Market signals | 17 | Drops, volatility window, correlation breakdown, stress bands |
-| HTTP API | 26 | Routing, validation, error mapping, API key, rate limiting, CORS, readiness |
+| Quant core | 44 | Horizon scaling, EWMA, VaR/ES, historical simulation, Euler attribution, concentration, correlation |
+| Market signals | 19 | Drops, volatility window, correlated drawdowns that scale with the universe, stress bands |
+| On-chain, off-chain | 16 | PDA seeds byte for byte, cluster naming, anchoring policy with hysteresis, the anchor store |
+| Asset table | 6 | Unique ids and mints, canonical keys, derived tables agree with the source |
+| HTTP API | 28 | Routing, validation, error mapping, API key, rate limiting, CORS, readiness, on-chain routes |
 | Wallet registry | 7 | Address validation, limits, persistence |
 | Store | 8 | History ring buffer, and what a restart is allowed to reinstate |
-| Frontend | 35 | Formatting across eight orders of magnitude, risk bands, engine status, engine-URL resolution |
-| On-chain | 11 | PDA derivation, authorization, timestamp bounds, rent reclaim |
+| Frontend | 43 | Formatting across eight orders of magnitude, risk bands, engine status, engine-URL resolution, explorer links, asset slots |
+| Program | 20 | Preferences, anchoring with and without a preference, the unnamed-reporter refusal, reporter isolation, immutability, rent reclaim |
 
 ### Configuration
 
@@ -520,13 +641,17 @@ Everything is environment-driven — see
 | `MAX_WALLETS` | `25` | Each wallet costs an RPC call per tick |
 | `DATA_DIR` | `./.data` | Wallet registry, price cache and risk history — mount a volume on ephemeral hosts |
 | `SIMULATION_MODE` | `false` | Synthetic portfolio for empty wallets — demos only |
-| `ENABLE_ONCHAIN_WRITES` | `false` | Costs SOL on every interval |
+| `ENABLE_ONCHAIN_WRITES` | `false` | Anchors scores on-chain; costs the reporter rent |
+| `ONCHAIN_ANCHOR_INTERVAL` | `3600000` | Hourly, plus every band crossing; floor 30s |
 
 ---
 
 ## Built for
 
-**Turbin3 Builder Cohort** — Capstone Project
+Started as the **Turbin3 Builder Cohort** capstone. v2 — the reporter-based
+program, on-chain anchoring for any wallet, the ten-asset universe and the
+correlation view — is the Solana build challenge submission. See
+[docs/SUBMISSION.md](docs/SUBMISSION.md) for the short version.
 
 ---
 
