@@ -298,8 +298,7 @@ snapshots at arbitrary points in a wallet's history.
 cd sentra/backend
 npm run init                 # checks the program is deployed and the reporter is funded
 # then in .env:
-ENABLE_ONCHAIN_WRITES=true
-RPC_URL=https://api.devnet.solana.com
+ENABLE_ONCHAIN_WRITES=true   # RPC_URL already defaults to devnet, where the program lives
 ```
 
 To register a threshold for a wallet you hold, sign with that wallet's key:

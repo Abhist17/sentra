@@ -60,8 +60,8 @@ A first real snapshot is [`5dxA6JF1…`](https://explorer.solana.com/address/5dx
    Prices and stress appear immediately; scoring starts once ten 30-day
    series have loaded (~1 minute on the public feed, instant on later runs).
 4. To see anchoring: `npm run init`, then set `ENABLE_ONCHAIN_WRITES=true`
-   and `RPC_URL=https://api.devnet.solana.com` in `.env`. The **On-chain
-   record** panel fills with rows that link to Explorer.
+   in `.env` (the program's cluster, devnet, is already the default). The
+   **On-chain record** panel fills with rows that link to Explorer.
 
 ## Verify a claim without trusting us
 

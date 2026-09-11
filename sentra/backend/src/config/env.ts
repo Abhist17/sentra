@@ -74,9 +74,14 @@ export const CONFIG = {
   VERSION: readVersion(),
 
   // ── Network ──────────────────────────────────────────────
-  // RPC_URL         → cluster we WRITE risk snapshots to (devnet/localnet)
+  // RPC_URL         → cluster the Sentra program lives on: snapshots are
+  //                   written there and read back from there. Devnet by
+  //                   default, because that is where the program is
+  //                   deployed — a fresh clone can read real snapshots
+  //                   without running a validator. Writes stay off until
+  //                   ENABLE_ONCHAIN_WRITES is set.
   // MAINNET_RPC_URL → cluster we READ real wallet balances from
-  RPC_URL: process.env.RPC_URL || "http://127.0.0.1:8899",
+  RPC_URL: process.env.RPC_URL || "https://api.devnet.solana.com",
   MAINNET_RPC_URL:
     process.env.MAINNET_RPC_URL || "https://api.mainnet-beta.solana.com",
 
