@@ -19,6 +19,12 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
       COINGECKO_API_KEY: ${COINGECKO_API_KEY:-}
+      # Optional — anchor scores to the Sentra program on devnet. Needs a
+      # funded keypair as the reporter; each snapshot rents ~0.0015 SOL.
+      RPC_URL: ${RPC_URL:-https://api.devnet.solana.com}
+      ENABLE_ONCHAIN_WRITES: ${ENABLE_ONCHAIN_WRITES:-false}
+      ONCHAIN_ANCHOR_INTERVAL: ${ONCHAIN_ANCHOR_INTERVAL:-3600000}
+      SOLANA_SECRET_KEY: ${SOLANA_SECRET_KEY:-}
     restart: unless-stopped
 
   dashboard:
