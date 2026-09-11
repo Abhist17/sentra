@@ -169,6 +169,16 @@ export function HowItWorks({
           </p>
         </Section>
 
+        <Section title="What if">
+          <p className="text-[12px] leading-relaxed text-tertiary">
+            Under <span className="text-secondary">Where the risk is</span>,
+            pick a share of any position to move into USDC. The engine
+            re-scores the actual book with the same series and arithmetic, so
+            the answer is the score you would see next tick if you had made
+            the trade &mdash; value kept, shape changed.
+          </p>
+        </Section>
+
         <Section title="On the chain">
           <p className="text-[12px] leading-relaxed text-tertiary">
             With anchoring on, the engine writes each wallet&rsquo;s score,
