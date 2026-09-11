@@ -19,10 +19,32 @@ import type {
  * readout cannot distinguish.
  */
 
-const PRICES = { SOL: 94.2, BONK: 0.00000318, JUP: 0.2043, USDC: 0.9999 };
+const PRICES = {
+  SOL: 94.2,
+  JITOSOL: 122.6,
+  USDC: 0.9999,
+  USDT: 0.9998,
+  JUP: 0.2043,
+  BONK: 0.00000318,
+  WIF: 0.187,
+  JTO: 0.412,
+  PYTH: 0.0498,
+  RAY: 1.63,
+};
 
 /** Realistic one-day volatilities, used to split risk across the book. */
-const VOL = { SOL: 0.026, BONK: 0.071, JUP: 0.043, USDC: 0.0003 };
+const VOL = {
+  SOL: 0.026,
+  JITOSOL: 0.026,
+  USDC: 0.0003,
+  USDT: 0.0003,
+  JUP: 0.043,
+  BONK: 0.071,
+  WIF: 0.078,
+  JTO: 0.049,
+  PYTH: 0.046,
+  RAY: 0.044,
+};
 
 /** Deterministic PRNG so a reload does not reshuffle the whole story. */
 function seeded(seed: number) {
@@ -277,10 +299,12 @@ export function buildDemoOverview(): Overview {
     address: "DemoDiversifiedWa11etAddressForShowcase222",
     label: "Diversified book",
     spec: [
-      { symbol: "SOL", amount: 1_180 },
-      { symbol: "JUP", amount: 620_000 },
-      { symbol: "BONK", amount: 6_800_000_000 },
-      { symbol: "USDC", amount: 128_000 },
+      { symbol: "SOL", amount: 980 },
+      { symbol: "JUP", amount: 420_000 },
+      { symbol: "PYTH", amount: 900_000 },
+      { symbol: "JTO", amount: 110_000 },
+      { symbol: "BONK", amount: 5_200_000_000 },
+      { symbol: "USDC", amount: 118_000 },
     ],
     riskBase: 19,
     riskVol: 0.1,
@@ -305,12 +329,12 @@ export function buildDemoOverview(): Overview {
     totals: { risk, portfolio, varUsd, esUsd, wallets: 2, updatedAt: Date.now() },
     market: {
       prices: PRICES,
-      changes: {
-        SOL: drift(),
-        BONK: drift(),
-        JUP: drift(),
-        USDC: drift() * 0.02,
-      },
+      changes: Object.fromEntries(
+        Object.keys(PRICES).map((symbol) => [
+          symbol,
+          drift() * (symbol === "USDC" || symbol === "USDT" ? 0.02 : 1),
+        ])
+      ),
       pricesStale: false,
       pricesFetchedAt: Date.now(),
       stress: {
@@ -318,11 +342,22 @@ export function buildDemoOverview(): Overview {
         level: "MODERATE",
         signals: ["⚡ Volatility spike: SOL, BONK"],
       },
-      volatility: { SOL: 0.034, BONK: 0.041, JUP: 0.019, USDC: 0.0003 },
+      volatility: {
+        SOL: 0.034,
+        JITOSOL: 0.033,
+        USDC: 0.0003,
+        USDT: 0.0003,
+        JUP: 0.019,
+        BONK: 0.041,
+        WIF: 0.038,
+        JTO: 0.021,
+        PYTH: 0.018,
+        RAY: 0.02,
+      },
       correlation: DEMO_CORRELATION,
       lastTickAt: Date.now(),
       lastTickError: null,
-      historyAssets: 4,
+      historyAssets: 10,
     },
     wallets,
     config: {

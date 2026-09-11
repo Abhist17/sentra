@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
 
 env:
-  SOLANA_VERSION: "3.0.15"
+  SOLANA_VERSION: "3.0.14"
   ANCHOR_VERSION: "0.32.1"
 
 jobs:
