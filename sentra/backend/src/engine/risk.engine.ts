@@ -39,6 +39,14 @@ import {
 import { CONFIG } from "../config/env";
 import type { PublicKey } from "@solana/web3.js";
 
+/** Prices here span eight orders of magnitude; one fixed precision fits none. */
+function formatPrice(value: number): string {
+  if (!Number.isFinite(value)) return "—";
+  if (value >= 1) return value.toFixed(2);
+  if (value >= 0.001) return value.toFixed(4);
+  return value.toFixed(8);
+}
+
 // ─────────────────────────────────────────────
 // 1. SHORT-TERM VOLATILITY TRACKER
 // Keeps the last N *live* prices per asset and takes the standard deviation
@@ -139,9 +147,21 @@ export interface CorrelationBreakdownResult {
   fallingCount: number;
 }
 
+/**
+ * How many non-stable assets must fall together to call it systemic. With
+ * three volatile assets this was all of them; the universe is larger now,
+ * and the signal keeps the same meaning — a clear majority moving down as
+ * one — rather than a fixed count that grows easier to trip as assets are
+ * added.
+ */
+export function correlatedMinimum(): number {
+  const volatile = ASSET_SYMBOLS.filter((s) => !STABLE_ASSETS.has(s)).length;
+  return Math.max(3, Math.ceil(volatile * 0.6));
+}
+
 export function detectCorrelationBreakdown(
   lookback = 3,
-  minFallingAssets = 3
+  minFallingAssets = correlatedMinimum()
 ): CorrelationBreakdownResult {
   const fallingAssets: string[] = [];
 
@@ -418,13 +438,32 @@ let lastShockAlertTime = 0;
 let tickInFlight = false;
 let engineTimer: NodeJS.Timeout | null = null;
 
-async function refreshHistoryIfStale() {
+/**
+ * The refresh runs beside the tick, not inside it. Ten assets at the feed's
+ * pace — plus the backoff a public rate limit imposes — take a minute or
+ * more, and a tick that waited for that overran its own interval, skipped
+ * the next slot, and left the dashboard with nothing to show. Now the tick
+ * publishes prices and stress at once and keeps its cadence; wallet scoring
+ * starts the moment the first refresh lands, and later refreshes swap the
+ * series in behind ticks that never notice.
+ */
+let historyRefresh: Promise<void> | null = null;
+
+function refreshHistoryIfStale(): Promise<void> {
   const stale =
     Object.keys(returnsBySymbol).length === 0 ||
     Date.now() - lastHistoryFetch > CONFIG.HISTORY_REFRESH_INTERVAL;
 
-  if (!stale) return;
+  if (!stale) return Promise.resolve();
+  if (historyRefresh) return historyRefresh;
 
+  historyRefresh = refreshHistory().finally(() => {
+    historyRefresh = null;
+  });
+  return historyRefresh;
+}
+
+async function refreshHistory() {
   console.log("🔄 Refreshing historical data...");
   const { returnsSource, failed } = await fetchAllHistories();
 
@@ -466,10 +505,8 @@ async function runTick() {
   const { prices, stale, fetchedAt } = await fetchLivePrices();
 
   console.log(
-    `💹 SOL: $${prices.SOL.toFixed(2)} | ` +
-      `BONK: $${prices.BONK.toFixed(8)} | ` +
-      `JUP: $${prices.JUP.toFixed(4)} | ` +
-      `USDC: $${prices.USDC.toFixed(4)}` +
+    "💹 " +
+      ASSET_SYMBOLS.map((s) => `${s}: $${formatPrice(prices[s])}`).join(" | ") +
       (stale ? " (cached)" : "")
   );
 
@@ -528,7 +565,14 @@ async function runTick() {
   /* =============================
      3. HISTORY + LIVE SIGNALS
   ============================= */
-  await refreshHistoryIfStale();
+  // Kicked off, not awaited — see refreshHistoryIfStale. A failure here is
+  // logged by the refresh itself and leaves the previous series in place.
+  refreshHistoryIfStale().catch((err) => {
+    console.warn(
+      "⚠️  History refresh failed:",
+      err instanceof Error ? err.message : err
+    );
+  });
 
   const {
     spiking: volatilitySpiking,
@@ -540,7 +584,7 @@ async function runTick() {
     console.log(`⚡ VOLATILITY SPIKE detected: ${spikingAssets.join(", ")}`);
   }
 
-  const correlationResult = detectCorrelationBreakdown(3, 3);
+  const correlationResult = detectCorrelationBreakdown(3);
 
   if (correlationResult.breakdown) {
     console.log(

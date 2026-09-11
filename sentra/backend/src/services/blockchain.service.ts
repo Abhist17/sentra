@@ -5,22 +5,20 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { CONFIG } from "../config/env";
-import { ASSET_SYMBOLS } from "./price.service";
+import { ASSETS, ASSET_SYMBOLS, type AssetSymbol } from "./price.service";
 
 // Bundled at build time so the service works from `dist/` and from any CWD.
 // Regenerate with `anchor build && cp target/idl/sentra.json backend/src/idl/`.
 import IDL from "../idl/sentra.json";
 
-// Known SPL token mint addresses (mainnet)
-export const TOKEN_MINTS: Record<string, string> = {
-  BONK: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
-  JUP: "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
-  USDC: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
-};
-
-const MINT_TO_SYMBOL: Record<string, string> = Object.fromEntries(
-  Object.entries(TOKEN_MINTS).map(([symbol, mint]) => [mint, symbol])
+/** Symbol → mainnet mint for every SPL asset in the universe (SOL is native). */
+export const TOKEN_MINTS: Record<string, string> = Object.fromEntries(
+  ASSETS.filter((a) => a.mint !== null).map((a) => [a.symbol, a.mint as string])
 );
+
+const MINT_TO_SYMBOL: Record<string, AssetSymbol> = Object.fromEntries(
+  Object.entries(TOKEN_MINTS).map(([symbol, mint]) => [mint, symbol])
+) as Record<string, AssetSymbol>;
 
 // ── Dual RPC setup ───────────────────────────────────────────────
 const mainnetConnection = new Connection(CONFIG.MAINNET_RPC_URL, "confirmed");
@@ -186,7 +184,9 @@ export async function fetchWalletPortfolio(
   );
   const solBalance = solRaw / anchor.web3.LAMPORTS_PER_SOL;
 
-  const tokenBalances: Record<string, number> = { BONK: 0, JUP: 0, USDC: 0 };
+  const tokenBalances: Record<string, number> = Object.fromEntries(
+    Object.keys(TOKEN_MINTS).map((symbol) => [symbol, 0])
+  );
 
   // Token-2022 mints live under a different program id and are invisible to a
   // TOKEN_PROGRAM_ID-only query.
@@ -220,9 +220,10 @@ export async function fetchWalletPortfolio(
 
   let portfolio: Holding[] = [
     { symbol: "SOL", amount: solBalance },
-    { symbol: "BONK", amount: tokenBalances.BONK },
-    { symbol: "JUP", amount: tokenBalances.JUP },
-    { symbol: "USDC", amount: tokenBalances.USDC },
+    ...Object.keys(TOKEN_MINTS).map((symbol) => ({
+      symbol,
+      amount: tokenBalances[symbol],
+    })),
   ];
 
   const totalBalance = portfolio.reduce((sum, h) => sum + h.amount, 0);

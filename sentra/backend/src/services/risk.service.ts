@@ -262,9 +262,11 @@ const DOMINANCE_FLOOR = 0.3;
 const DOMINANCE_CEILING = 0.7;
 
 /**
- * How many equally-weighted names count as properly diversified. Four,
- * because four is how many assets the engine prices — a book cannot be asked
- * to spread across names the model cannot see.
+ * How many equally-weighted names count as properly diversified. Four: past
+ * that, Solana assets are correlated enough that another ticker buys little
+ * — the diversification ratio measures what it does buy — and a book spread
+ * across four real positions is not a bet on one thing, which is all this
+ * penalty exists to catch.
  */
 const TARGET_ASSETS = 4;
 

@@ -278,6 +278,7 @@ export default function Dashboard() {
                     <HoldingsTable
                       holdings={active.metrics.holdings}
                       total={active.metrics.portfolio}
+                      tracked={config.trackedAssets}
                     />
                   ) : (
                     <EmptyState

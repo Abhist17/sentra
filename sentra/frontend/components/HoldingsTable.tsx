@@ -1,15 +1,18 @@
 "use client";
 
 import type { Holding } from "@/lib/types";
-import { usd, tokenAmount, price, assetColor } from "@/lib/format";
+import { usd, tokenAmount, price, assetColor, assetName } from "@/lib/format";
 import { EmptyState } from "./ui";
 
 export function HoldingsTable({
   holdings,
   total,
+  tracked = [],
 }: {
   holdings: Holding[];
   total: number;
+  /** The engine's asset universe, for the empty state. */
+  tracked?: string[];
 }) {
   const held = holdings
     .filter((h) => h.value > 0)
@@ -19,7 +22,9 @@ export function HoldingsTable({
     return (
       <EmptyState
         title="No priced holdings"
-        body="This wallet holds none of the tracked assets — SOL, BONK, JUP or USDC."
+        body={`This wallet holds none of the assets the engine prices${
+          tracked.length ? ` — ${tracked.join(", ")}` : ""
+        }.`}
         compact
       />
     );
@@ -75,6 +80,9 @@ export function HoldingsTable({
                       style={{ backgroundColor: assetColor(h.symbol) }}
                     />
                     <span className="font-medium text-text">{h.symbol}</span>
+                    <span className="hidden text-[11px] text-tertiary sm:inline">
+                      {assetName(h.symbol) !== h.symbol ? assetName(h.symbol) : ""}
+                    </span>
                   </span>
                 </td>
                 <td className="numeric px-4 py-2.5 text-right text-secondary">

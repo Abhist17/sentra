@@ -17,6 +17,7 @@ import {
   riskBand,
   stressColor,
   assetColor,
+  assetName,
   engineStatus,
   BAND_THRESHOLDS,
 } from "../format";
@@ -160,10 +161,12 @@ describe("colour mapping", () => {
     expect(stressColor("nonsense")).toBe("var(--calm)");
   });
 
-  test("known assets are distinct and unknown ones fall back", () => {
-    const known = ["SOL", "BONK", "JUP", "USDC"].map(assetColor);
-    expect(new Set(known).size).toBe(4);
-    expect(assetColor("WIF")).toBe("var(--asset-other)");
+  test("the original four assets keep their slots across the v2 expansion", () => {
+    // A returning viewer should see SOL in the same colour it always was.
+    expect(assetColor("SOL")).toBe("var(--asset-1)");
+    expect(assetColor("BONK")).toBe("var(--asset-2)");
+    expect(assetColor("JUP")).toBe("var(--asset-3)");
+    expect(assetColor("USDC")).toBe("var(--asset-4)");
   });
 });
 
@@ -223,5 +226,28 @@ describe("engineStatus", () => {
       expect(status.description.length).toBeGreaterThan(status.label.length);
       expect(status.color).toMatch(/^var\(--/);
     }
+  });
+});
+
+describe("asset slots", () => {
+  const UNIVERSE = [
+    "SOL", "JITOSOL", "USDC", "USDT", "JUP", "BONK", "WIF", "JTO", "PYTH", "RAY",
+  ];
+
+  test("every tracked asset has its own colour slot", () => {
+    const slots = UNIVERSE.map(assetColor);
+    expect(new Set(slots).size).toBe(UNIVERSE.length);
+    for (const slot of slots) expect(slot).not.toBe("var(--asset-other)");
+  });
+
+  test("anything outside the universe shares the neutral", () => {
+    expect(assetColor("DOGE")).toBe("var(--asset-other)");
+    expect(assetColor("")).toBe("var(--asset-other)");
+  });
+
+  test("names fall back to the ticker", () => {
+    expect(assetName("SOL")).toBe("Solana");
+    expect(assetName("JITOSOL")).toBe("Jito staked SOL");
+    expect(assetName("XYZ")).toBe("XYZ");
   });
 });

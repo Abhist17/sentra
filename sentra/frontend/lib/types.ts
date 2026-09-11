@@ -1,4 +1,9 @@
-export type AssetSymbol = "SOL" | "BONK" | "JUP" | "USDC";
+/**
+ * The engine's asset universe. Kept as a string so a dashboard build never
+ * has to be redeployed when the engine learns a new token — the engine's
+ * `config.trackedAssets` is the source of truth at runtime.
+ */
+export type AssetSymbol = string;
 
 export type StressLevel = "LOW" | "MODERATE" | "HIGH" | "CRITICAL";
 

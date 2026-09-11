@@ -37,11 +37,20 @@
   --elevated: #c2804f;
   --severe: #c25f5f;
 
-  /* Allocation categoricals — muted, distinguishable, equal weight */
-  --asset-1: #7c8dd6;
-  --asset-2: #bf9b4f;
-  --asset-3: #9d84bd;
-  --asset-4: #6b95b8;
+  /* Allocation categoricals — muted, distinguishable, equal weight.
+     Ten slots for the ten assets the engine prices; a real wallet shows
+     three to five of them, so adjacent slots are what must stay apart.
+     Hues deliberately avoid the risk ramp's greens and reds. */
+  --asset-1: #7c8dd6; /* SOL      periwinkle */
+  --asset-2: #bf9b4f; /* BONK     gold */
+  --asset-3: #9d84bd; /* JUP      lavender */
+  --asset-4: #6b95b8; /* USDC     steel */
+  --asset-5: #6aa5a4; /* JITOSOL  teal — SOL's neighbour, on purpose */
+  --asset-6: #8fa3b5; /* USDT     slate — USDC's neighbour, on purpose */
+  --asset-7: #c48b8b; /* WIF      dusty rose */
+  --asset-8: #a7a06b; /* JTO      olive */
+  --asset-9: #b98fc4; /* PYTH     orchid */
+  --asset-10: #8f9fd9; /* RAY     cornflower */
   --asset-other: #6a6a73;
 
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.28);
@@ -76,6 +85,12 @@
   --asset-2: #8f6a12;
   --asset-3: #6f5591;
   --asset-4: #3f6b8f;
+  --asset-5: #2f7a78;
+  --asset-6: #5c7186;
+  --asset-7: #a04f4f;
+  --asset-8: #6f6a2b;
+  --asset-9: #7f4f8f;
+  --asset-10: #4a5fb0;
   --asset-other: #86868f;
 
   --shadow-sm: 0 1px 2px rgb(16 16 20 / 0.06);

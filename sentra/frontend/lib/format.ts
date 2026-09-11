@@ -213,13 +213,40 @@ export function engineStatus(input: {
 }
 
 // ── Allocation ───────────────────────────────────────────────────
+// Fixed slots for the assets the engine prices, so SOL is the same colour on
+// every wallet and every visit. Anything outside the universe shares one
+// neutral, which is also what "not modelled" looks like.
 const ASSET_SLOTS: Record<string, string> = {
   SOL: "var(--asset-1)",
   BONK: "var(--asset-2)",
   JUP: "var(--asset-3)",
   USDC: "var(--asset-4)",
+  JITOSOL: "var(--asset-5)",
+  USDT: "var(--asset-6)",
+  WIF: "var(--asset-7)",
+  JTO: "var(--asset-8)",
+  PYTH: "var(--asset-9)",
+  RAY: "var(--asset-10)",
 };
 
 export function assetColor(symbol: string): string {
   return ASSET_SLOTS[symbol] ?? "var(--asset-other)";
+}
+
+/** Display names for the tracked assets; the ticker is the fallback. */
+const ASSET_NAMES: Record<string, string> = {
+  SOL: "Solana",
+  JITOSOL: "Jito staked SOL",
+  USDC: "USD Coin",
+  USDT: "Tether",
+  JUP: "Jupiter",
+  BONK: "Bonk",
+  WIF: "dogwifhat",
+  JTO: "Jito",
+  PYTH: "Pyth Network",
+  RAY: "Raydium",
+};
+
+export function assetName(symbol: string): string {
+  return ASSET_NAMES[symbol] ?? symbol;
 }

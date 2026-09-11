@@ -13,17 +13,22 @@ import {
   computeMarketStressScore,
   detectVolatilitySpike,
   detectCorrelationBreakdown,
+  correlatedMinimum,
   computeVolatility,
   updatePriceWindow,
   resetPriceWindow,
 } from "../engine/risk.engine";
-import type { PriceMap } from "../services/price.service";
+import {
+  ASSET_SYMBOLS,
+  STABLE_ASSETS,
+  type PriceMap,
+} from "../services/price.service";
 
+/** A full price map — every tracked asset at a placeholder — with overrides. */
 const prices = (p: Partial<PriceMap>): PriceMap => ({
+  ...(Object.fromEntries(ASSET_SYMBOLS.map((s) => [s, 1])) as PriceMap),
   SOL: 100,
   BONK: 0.00001,
-  JUP: 1,
-  USDC: 1,
   ...p,
 });
 
@@ -217,4 +222,38 @@ test("band boundaries land on the documented levels", () => {
   assert.equal(computeMarketStressScore(false, [], false, [], true, []).level, "HIGH");
   assert.equal(computeMarketStressScore(true, [], true, [], true, []).level, "CRITICAL");
   void at;
+});
+
+// ── Correlation threshold scales with the universe ───────────────
+
+test("a correlated drawdown needs a clear majority of volatile assets", () => {
+  const volatile = ASSET_SYMBOLS.filter((s) => !STABLE_ASSETS.has(s)).length;
+  const minimum = correlatedMinimum();
+
+  assert.ok(minimum >= 3, "never easier to trip than the original three");
+  assert.ok(minimum <= volatile, "never impossible");
+  assert.equal(minimum, Math.max(3, Math.ceil(volatile * 0.6)));
+
+  // Stablecoins are excluded from the count entirely — USDC drifting is
+  // not a market falling.
+  assert.ok(!ASSET_SYMBOLS.filter((s) => STABLE_ASSETS.has(s)).includes("SOL"));
+});
+
+test("the default threshold is the scaled one", () => {
+  const minimum = correlatedMinimum();
+  const volatile = ASSET_SYMBOLS.filter((s) => !STABLE_ASSETS.has(s));
+
+  // One short of the minimum falling: no breakdown.
+  for (const symbol of volatile.slice(0, minimum - 1)) {
+    for (const p of [1, 0.98, 0.96, 0.94]) updatePriceWindow(symbol, p);
+  }
+  assert.equal(detectCorrelationBreakdown(3).breakdown, false);
+
+  // The minimum falling: breakdown.
+  for (const p of [1, 0.98, 0.96, 0.94]) {
+    updatePriceWindow(volatile[minimum - 1], p);
+  }
+  const r = detectCorrelationBreakdown(3);
+  assert.equal(r.breakdown, true);
+  assert.equal(r.fallingCount, minimum);
 });

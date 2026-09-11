@@ -3,21 +3,96 @@ import fs from "fs";
 import path from "path";
 import { CONFIG } from "../config/env";
 
-export const TRACKED_ASSETS = {
-  SOL: "solana",
-  BONK: "bonk",
-  JUP: "jupiter-exchange-solana",
-  USDC: "usd-coin",
-} as const;
+/**
+ * The asset universe: what the engine can price, and therefore what a wallet
+ * can be scored on. Anything else a wallet holds is invisible to the model,
+ * and the dashboard says so through the coverage figure.
+ *
+ * One row per asset so the CoinGecko id, the mainnet mint and the stable flag
+ * cannot drift apart. `mint` is null for native SOL. Ids and mints were
+ * checked against CoinGecko's own `platforms.solana` field.
+ *
+ * Every asset costs one history request an hour, so this is a curated list of
+ * the tokens most Solana books actually hold, not a registry. Adding one is a
+ * line here — nothing else in the engine enumerates assets by name.
+ */
+export const ASSETS = [
+  { symbol: "SOL", coingeckoId: "solana", mint: null, stable: false },
+  {
+    symbol: "JITOSOL",
+    coingeckoId: "jito-staked-sol",
+    mint: "J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn",
+    stable: false,
+  },
+  {
+    symbol: "USDC",
+    coingeckoId: "usd-coin",
+    mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+    stable: true,
+  },
+  {
+    symbol: "USDT",
+    coingeckoId: "tether",
+    mint: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",
+    stable: true,
+  },
+  {
+    symbol: "JUP",
+    coingeckoId: "jupiter-exchange-solana",
+    mint: "JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN",
+    stable: false,
+  },
+  {
+    symbol: "BONK",
+    coingeckoId: "bonk",
+    mint: "DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263",
+    stable: false,
+  },
+  {
+    symbol: "WIF",
+    coingeckoId: "dogwifcoin",
+    mint: "EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm",
+    stable: false,
+  },
+  {
+    symbol: "JTO",
+    coingeckoId: "jito-governance-token",
+    mint: "jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL",
+    stable: false,
+  },
+  {
+    symbol: "PYTH",
+    coingeckoId: "pyth-network",
+    mint: "HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3",
+    stable: false,
+  },
+  {
+    symbol: "RAY",
+    coingeckoId: "raydium",
+    mint: "4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R",
+    stable: false,
+  },
+] as const;
 
-export type AssetSymbol = keyof typeof TRACKED_ASSETS;
+export type AssetSymbol = (typeof ASSETS)[number]["symbol"];
 export type PriceMap = Record<AssetSymbol, number>;
 
-export const ASSET_SYMBOLS = Object.keys(TRACKED_ASSETS) as AssetSymbol[];
+export const ASSET_SYMBOLS = ASSETS.map((a) => a.symbol) as AssetSymbol[];
+
+/** Symbol → CoinGecko id. */
+export const TRACKED_ASSETS = Object.fromEntries(
+  ASSETS.map((a) => [a.symbol, a.coingeckoId])
+) as Record<AssetSymbol, string>;
 
 // Stablecoins are excluded from volatility/shock signals — a 3% "move" on
 // USDC is a feed glitch, not a market event.
-export const STABLE_ASSETS = new Set<AssetSymbol>(["USDC"]);
+export const STABLE_ASSETS = new Set<AssetSymbol>(
+  ASSETS.filter((a) => a.stable).map((a) => a.symbol)
+);
+
+export function isAssetSymbol(value: string): value is AssetSymbol {
+  return (ASSET_SYMBOLS as string[]).includes(value);
+}
 
 const COINGECKO_SIMPLE = "https://api.coingecko.com/api/v3/simple/price";
 const COINGECKO_HISTORY = "https://api.coingecko.com/api/v3/coins";
@@ -257,18 +332,31 @@ export function inferIntervalMs(points: PricePoint[]): number | null {
  * so a single rate limit degrades precision instead of corrupting the model.
  */
 export async function fetchAllHistories(
-  spacingMs = 2500
+  spacingMs = 2000,
+  maxAgeMs = CONFIG.HISTORY_REFRESH_INTERVAL
 ): Promise<{ returnsSource: Record<string, PricePoint[]>; failed: string[] }> {
   const returnsSource: Record<string, PricePoint[]> = {};
   const failed: string[] = [];
+  let requests = 0;
 
-  for (let i = 0; i < ASSET_SYMBOLS.length; i++) {
-    const symbol = ASSET_SYMBOLS[i];
+  for (const symbol of ASSET_SYMBOLS) {
     const coinId = TRACKED_ASSETS[symbol];
 
+    // A cached series younger than the refresh interval is what a refresh
+    // would return anyway. Using it directly makes a restart score on its
+    // first tick instead of re-earning a rate limit for ten identical
+    // answers.
+    const cached = historyCache.get(coinId);
+    if (cached && Date.now() - cached.fetchedAt < maxAgeMs) {
+      returnsSource[symbol] = cached.points;
+      continue;
+    }
+
     // Space requests out rather than sleeping i*spacing (which made the last
-    // asset wait for the sum of all previous delays).
-    if (i > 0) await sleep(spacingMs);
+    // asset wait for the sum of all previous delays). Only real requests
+    // count — a cache hit costs the feed nothing.
+    if (requests > 0) await sleep(spacingMs);
+    requests++;
 
     try {
       const points = await fetchHistory(coinId);
