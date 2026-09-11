@@ -44,7 +44,11 @@ Owners may register a preference (threshold + trusted reporter); only that
 reporter's snapshots then emit `RiskScoreRecorded { breached: true }` — the
 event an on-chain consumer (a vault, a lending market, a bot) subscribes to.
 
-The IDL is published on-chain, so Solana Explorer decodes every account.
+The IDL is published on-chain, so Solana Explorer decodes every account,
+and the deployed program is a **reproducible build**: `solana-verify
+verify-from-repo` against this repository reports a matching hash
+(`3512e377…`), and the verification record lives on-chain at
+`E2bG6ActyMLYVWTeDUmtELnggj6gGi732rj91zyRcBVd`.
 A first real snapshot is [`5dxA6JF1…`](https://explorer.solana.com/address/5dxA6JF1yaLmRWbC9GoEokhYszhVLcfgSeZE9Pqf3u3n?cluster=devnet)
 — score 25 on a $972M stake-pool wallet with $51.8M at risk.
 
@@ -82,7 +86,7 @@ solana account <snapshot pda> --url devnet          # or skip the engine
 
 ## Numbers
 
-- 191 tests: 128 engine, 43 dashboard, 20 program (local validator)
+- 191 tests: 128 engine, 43 dashboard, 20 program (local validator, also in CI)
 - 10 assets priced; 5 program instructions; 1 event
 - Dashboard: static export, hand-rolled SVG, no charting dependency,
   keyboard-first, light and dark, screen-reader announcements

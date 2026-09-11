@@ -11,6 +11,10 @@ Sentra tells you how much you stand to lose, and writes it down where nobody can
 [**Program on devnet →**](https://explorer.solana.com/address/6n6DZhiPwhYxiBLaRn9kYSW2s7WvWiVwDmciG2jP2Aoj?cluster=devnet) ·
 [What's new in v2](CHANGELOG.md)
 
+[![CI](https://github.com/Abhist17/sentra/actions/workflows/ci.yml/badge.svg)](https://github.com/Abhist17/sentra/actions/workflows/ci.yml)
+[![Program tests](https://github.com/Abhist17/sentra/actions/workflows/program-tests.yml/badge.svg)](https://github.com/Abhist17/sentra/actions/workflows/program-tests.yml)
+[![Deploy dashboard](https://github.com/Abhist17/sentra/actions/workflows/deploy-pages.yml/badge.svg)](https://github.com/Abhist17/sentra/actions/workflows/deploy-pages.yml)
+
 </div>
 
 ![The Sentra dashboard: a blended risk dial, portfolio exposure and Value at Risk, a live risk trend with on-chain anchors marked, the holdings behind it, and the on-chain record](docs/dashboard.png)
@@ -182,7 +186,12 @@ $50,000 book with $3,100 at risk at 14:03 on Tuesday"* becomes something you
 open, not something you believe.
 
 **Program:** [`6n6DZhiPwhYxiBLaRn9kYSW2s7WvWiVwDmciG2jP2Aoj`](https://explorer.solana.com/address/6n6DZhiPwhYxiBLaRn9kYSW2s7WvWiVwDmciG2jP2Aoj?cluster=devnet)
-on devnet, IDL published on-chain so the explorer decodes every account.
+on devnet, IDL published on-chain so the explorer decodes every account, and
+built reproducibly: the deployed bytes hash to
+`3512e377ba6a25561983903ce9b1c193b191f36156b5676afe1538c1a1838503`, which is
+what this repository produces in the standard verifiable-build container. The
+verification record is on-chain at
+[`E2bG6ActyMLYVWTeDUmtELnggj6gGi732rj91zyRcBVd`](https://explorer.solana.com/address/E2bG6ActyMLYVWTeDUmtELnggj6gGi732rj91zyRcBVd?cluster=devnet).
 
 ### Two roles, one trust model
 
@@ -238,6 +247,25 @@ solana account 5dxA6JF1yaLmRWbC9GoEokhYszhVLcfgSeZE9Pqf3u3n --url devnet
 `/snapshots?wallet=…&all=1` widens the read to every reporter that has ever
 scored the wallet, each row saying who.
 
+### Verify the program itself
+
+The bytes on devnet are the bytes this repository builds — not a claim, a
+hash. With Docker and [`solana-verify`](https://solana.com/docs/programs/verified-builds)
+installed:
+
+```bash
+solana-verify verify-from-repo -u devnet \
+  --program-id 6n6DZhiPwhYxiBLaRn9kYSW2s7WvWiVwDmciG2jP2Aoj \
+  https://github.com/Abhist17/sentra --mount-path sentra --library-name sentra
+# Executable Program Hash from repo: 3512e377…
+# On-chain Program Hash:             3512e377…
+# Program hash matches ✅
+```
+
+(OtterSec's remote verifier, which puts the badge on the explorer, only
+serves mainnet; on devnet the on-chain record and the reproducible hash are
+the whole proof.)
+
 ### Instructions
 
 | Instruction | Signer | Purpose |
@@ -271,9 +299,12 @@ npm run preferences -- --show
 
 To deploy your own copy of the program: `anchor build && anchor deploy
 --provider.cluster devnet` in `sentra/`, then `anchor idl init` so explorers can
-decode it. `anchor build` regenerates `backend/src/idl/sentra.json`; without
-the SBF toolchain, `node scripts/gen-idl.js` reproduces it byte for byte, and
-CI fails if the bundled copy has drifted from the program.
+decode it. For a build others can reproduce, `solana-verify build
+--library-name sentra` in `sentra/` produces the binary in the standard
+container; deploy that one. `anchor build` regenerates
+`backend/src/idl/sentra.json`; without the SBF toolchain,
+`node scripts/gen-idl.js` reproduces it byte for byte, and CI fails if the
+bundled copy has drifted from the program.
 
 ---
 
@@ -549,7 +580,7 @@ sentra/
 |:--|:--|
 | Dashboard | Next.js 16 · React 19 · Tailwind CSS 4 |
 | Engine | Node.js · Express 5 · TypeScript |
-| Program | Rust · Anchor 0.32 · deployed on devnet |
+| Program | Rust · Anchor 0.32 · deployed on devnet, reproducible build |
 | Price feed | CoinGecko |
 | Alerts | Telegram Bot API |
 
@@ -610,7 +641,8 @@ anchor test              # program integration tests on a local validator
 ### Tests
 
 191 tests. The 171 off-chain ones need no network; the 20 program tests run
-against a local validator that `anchor test` starts for you.
+against a local validator that `anchor test` starts for you — and that CI
+starts too, whenever the program or its tests change.
 
 | Suite | Count | Covers |
 |:--|--:|:--|

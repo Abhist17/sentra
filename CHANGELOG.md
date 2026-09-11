@@ -25,8 +25,10 @@ risk", not just "72". `close_preference` lets an owner reclaim rent, as
 `close_snapshot` already did for the reporter.
 
 Deployed to **devnet** as `6n6DZhiPwhYxiBLaRn9kYSW2s7WvWiVwDmciG2jP2Aoj`,
-with the IDL published on-chain so explorers decode every account. The v1
-id was never deployed. 20 Anchor tests on a local validator.
+with the IDL published on-chain so explorers decode every account, from a
+reproducible build whose hash and verification record are on-chain. The v1
+id was never deployed. 20 Anchor tests on a local validator, run in CI as
+well.
 
 ### Anchoring that costs what it should
 
