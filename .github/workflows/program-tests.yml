@@ -15,6 +15,10 @@ on:
       - ".github/workflows/program-tests.yml"
   workflow_dispatch:
 
+env:
+  SOLANA_VERSION: "3.0.15"
+  ANCHOR_VERSION: "0.32.1"
+
 jobs:
   anchor:
     name: anchor test
@@ -34,11 +38,39 @@ jobs:
         with:
           workspaces: sentra
 
-      - uses: metadaoproject/setup-anchor@v3
+      - uses: actions/setup-node@v4
         with:
-          anchor-version: "0.32.1"
-          solana-cli-version: "3.0.15"
-          node-version: "22"
+          node-version: 22
+
+      # The Solana CLI brings the test validator; the SBF platform tools
+      # that `anchor build` downloads land in ~/.cache/solana, so both are
+      # cached together and a warm run skips ~600 MB of downloads.
+      - name: Cache Solana toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.local/share/solana
+            ~/.cache/solana
+          key: solana-${{ runner.os }}-${{ env.SOLANA_VERSION }}-${{ env.ANCHOR_VERSION }}
+
+      - name: Install Solana CLI
+        run: |
+          if [ ! -x "$HOME/.local/share/solana/install/active_release/bin/solana" ]; then
+            sh -c "$(curl -sSfL https://release.anza.xyz/v${SOLANA_VERSION}/install)"
+          fi
+          echo "$HOME/.local/share/solana/install/active_release/bin" >> "$GITHUB_PATH"
+
+      # Anchor 0.32 is not published to npm; the release ships a prebuilt
+      # Linux binary, which beats compiling the CLI on every run.
+      - name: Install Anchor CLI
+        run: |
+          mkdir -p "$HOME/.local/bin"
+          curl -sSfL -o "$HOME/.local/bin/anchor" \
+            "https://github.com/coral-xyz/anchor/releases/download/v${ANCHOR_VERSION}/anchor-${ANCHOR_VERSION}-x86_64-unknown-linux-gnu"
+          chmod +x "$HOME/.local/bin/anchor"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - run: solana --version && anchor --version
 
       # `anchor test` signs with the CLI's default keypair, which a fresh
       # runner does not have.
