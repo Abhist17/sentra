@@ -304,6 +304,7 @@ export default function Dashboard() {
                     }
                   />
                   <OnChainPanel
+                    wallet={active?.address ?? null}
                     anchors={active?.anchors ?? []}
                     onchain={config.onchain}
                     demo={demo}
