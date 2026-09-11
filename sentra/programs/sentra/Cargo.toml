@@ -1,7 +1,7 @@
 [package]
 name = "sentra"
-version = "0.1.0"
-description = "Created with Anchor"
+version = "2.0.0"
+description = "Sentra — on-chain risk snapshots for Solana wallets"
 edition = "2021"
 
 [lib]
