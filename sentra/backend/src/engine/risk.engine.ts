@@ -11,6 +11,8 @@ import {
   computeReturns,
   calculatePortfolioRisk,
   concentrationPenalty,
+  correlationMatrix,
+  scaleLambdaToFrequency,
 } from "../services/risk.service";
 import { sendTelegramAlert } from "../services/telegram.service";
 import {
@@ -493,6 +495,23 @@ async function refreshHistory() {
         `${periodsPerDay.toFixed(1)} obs/day` +
         (failed.length ? ` — unavailable: ${failed.join(", ")}` : "")
     );
+
+    // Stablecoins are left out: their variance is feed noise, and a
+    // correlation of noise with anything is a number that means nothing.
+    const volatile = ASSET_SYMBOLS.filter((s) => !STABLE_ASSETS.has(s));
+    const { symbols, matrix } = correlationMatrix(
+      returnsBySymbol,
+      volatile,
+      scaleLambdaToFrequency(CONFIG.VAR_LAMBDA, periodsPerDay)
+    );
+    updateMarket({
+      correlation: {
+        symbols,
+        matrix,
+        asOf: lastHistoryFetch,
+        windowDays: CONFIG.HISTORY_DAYS,
+      },
+    });
   } else {
     console.warn("⚠️  History refresh produced no usable series");
   }

@@ -208,6 +208,56 @@ function wallet(opts: {
   };
 }
 
+/**
+ * A plausible 30-day picture of the Solana majors: the liquid-staking token
+ * is SOL in another wrapper, the DeFi tokens track SOL closely, and the meme
+ * pair moves together more than either moves with anything else.
+ */
+const DEMO_CORRELATION = (() => {
+  const symbols = ["SOL", "JITOSOL", "JUP", "BONK", "WIF", "JTO", "PYTH", "RAY"];
+  const upper: Record<string, number> = {
+    "SOL|JITOSOL": 0.99,
+    "SOL|JUP": 0.78,
+    "SOL|BONK": 0.71,
+    "SOL|WIF": 0.66,
+    "SOL|JTO": 0.74,
+    "SOL|PYTH": 0.69,
+    "SOL|RAY": 0.76,
+    "JITOSOL|JUP": 0.77,
+    "JITOSOL|BONK": 0.7,
+    "JITOSOL|WIF": 0.65,
+    "JITOSOL|JTO": 0.73,
+    "JITOSOL|PYTH": 0.68,
+    "JITOSOL|RAY": 0.75,
+    "JUP|BONK": 0.62,
+    "JUP|WIF": 0.58,
+    "JUP|JTO": 0.71,
+    "JUP|PYTH": 0.66,
+    "JUP|RAY": 0.7,
+    "BONK|WIF": 0.84,
+    "BONK|JTO": 0.57,
+    "BONK|PYTH": 0.55,
+    "BONK|RAY": 0.6,
+    "WIF|JTO": 0.53,
+    "WIF|PYTH": 0.51,
+    "WIF|RAY": 0.56,
+    "JTO|PYTH": 0.72,
+    "JTO|RAY": 0.68,
+    "PYTH|RAY": 0.64,
+  };
+  const matrix = symbols.map((a, i) =>
+    symbols.map((b, j) =>
+      i === j ? 1 : upper[`${a}|${b}`] ?? upper[`${b}|${a}`] ?? 0
+    )
+  );
+  return {
+    symbols,
+    matrix,
+    asOf: Date.now() - 22 * 60_000,
+    windowDays: 30,
+  };
+})();
+
 export function buildDemoOverview(): Overview {
   const concentrated = wallet({
     address: "DemoCon1entratedWa11etAddressForShowcase111",
@@ -269,6 +319,7 @@ export function buildDemoOverview(): Overview {
         signals: ["⚡ Volatility spike: SOL, BONK"],
       },
       volatility: { SOL: 0.034, BONK: 0.041, JUP: 0.019, USDC: 0.0003 },
+      correlation: DEMO_CORRELATION,
       lastTickAt: Date.now(),
       lastTickError: null,
       historyAssets: 4,

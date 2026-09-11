@@ -25,6 +25,7 @@ import {
   concentrationPenalty,
   MAX_CONCENTRATION_PENALTY,
   MIN_HISTORICAL_OBSERVATIONS,
+  correlationMatrix,
 } from "../services/risk.service";
 
 // A deterministic pseudo-random normal series, so tests do not flake.
@@ -627,4 +628,57 @@ test("the penalty stays inside its declared range", () => {
     const { penalty } = concentrationPenalty(weights);
     assert.ok(penalty >= 0 && penalty <= MAX_CONCENTRATION_PENALTY);
   }
+});
+
+// ── Correlation matrix ───────────────────────────────────────────
+
+test("correlation has a unit diagonal, is symmetric and bounded", () => {
+  const a = syntheticReturns(300, 0.02, 11);
+  const b = syntheticReturns(300, 0.03, 12);
+  const c = syntheticReturns(300, 0.05, 13);
+
+  const { symbols, matrix } = correlationMatrix({ A: a, B: b, C: c }, ["A", "B", "C"]);
+  assert.deepEqual(symbols, ["A", "B", "C"]);
+
+  for (let i = 0; i < 3; i++) {
+    assert.equal(matrix[i][i], 1);
+    for (let j = 0; j < 3; j++) {
+      assert.ok(matrix[i][j] >= -1 && matrix[i][j] <= 1);
+      assert.ok(Math.abs(matrix[i][j] - matrix[j][i]) < 1e-12, "symmetric");
+    }
+  }
+});
+
+test("a scaled copy correlates at exactly one, an inverted one at minus one", () => {
+  const a = syntheticReturns(200, 0.02, 21);
+  const { matrix } = correlationMatrix(
+    { A: a, B: a.map((r) => r * 3), C: a.map((r) => -r) },
+    ["A", "B", "C"]
+  );
+  assert.ok(Math.abs(matrix[0][1] - 1) < 1e-9);
+  assert.ok(Math.abs(matrix[0][2] + 1) < 1e-9);
+});
+
+test("independent series sit near zero", () => {
+  // The default decay remembers ~17 observations, and the sampling noise on
+  // a correlation from 17 points is about ±0.25 — so this uses a long
+  // memory, and seeds far apart, since adjacent LCG streams are themselves
+  // correlated.
+  const { matrix } = correlationMatrix(
+    { A: syntheticReturns(4000, 0.02, 31), B: syntheticReturns(4000, 0.02, 99991) },
+    ["A", "B"],
+    0.999
+  );
+  assert.ok(Math.abs(matrix[0][1]) < 0.1, `got ${matrix[0][1]}`);
+});
+
+test("a flat series correlates zero rather than NaN, and missing ones are dropped", () => {
+  const { symbols, matrix } = correlationMatrix(
+    { A: syntheticReturns(100, 0.02, 41), FLAT: new Array(100).fill(0), SHORT: [0.01] },
+    ["A", "FLAT", "SHORT", "MISSING"]
+  );
+  assert.deepEqual(symbols, ["A", "FLAT"]);
+  assert.equal(matrix[0][1], 0);
+  assert.equal(matrix[1][1], 1);
+  assert.ok(matrix.every((row) => row.every(Number.isFinite)));
 });

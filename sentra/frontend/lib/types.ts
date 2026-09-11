@@ -133,6 +133,13 @@ export interface Overview {
     pricesFetchedAt: number;
     stress: { score: number; level: StressLevel; signals: string[] };
     volatility: Record<string, number>;
+    /** EWMA correlation of the volatile assets; null until history loads. */
+    correlation: {
+      symbols: string[];
+      matrix: number[][];
+      asOf: number;
+      windowDays: number;
+    } | null;
     lastTickAt: number;
     lastTickError: string | null;
     historyAssets: number;

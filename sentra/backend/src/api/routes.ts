@@ -254,6 +254,7 @@ export function registerRoutes(app: Express) {
         pricesFetchedAt: market.pricesFetchedAt,
         stress: market.stress,
         volatility: market.volatility,
+        correlation: market.correlation,
         lastTickAt: market.lastTickAt,
         lastTickError: market.lastTickError,
         historyAssets: market.historyAssets,

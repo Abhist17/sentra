@@ -95,6 +95,18 @@ export interface MarketState {
   };
   /** Annualised-ish volatility per asset from the live tick window */
   volatility: Record<string, number>;
+  /**
+   * EWMA correlation of the non-stable assets over the history window, on
+   * the decay the VaR model uses. Refreshed with the history, not per tick.
+   */
+  correlation: {
+    symbols: string[];
+    matrix: number[][];
+    /** When the series behind it were last refreshed. */
+    asOf: number;
+    /** Days of history behind it. */
+    windowDays: number;
+  } | null;
   lastTickAt: number;
   lastTickError: string | null;
   historyAssets: number;
@@ -317,6 +329,7 @@ const market: MarketState = {
   pricesFetchedAt: 0,
   stress: { score: 0, level: "LOW", signals: [] },
   volatility: {},
+  correlation: null,
   lastTickAt: 0,
   lastTickError: null,
   historyAssets: 0,

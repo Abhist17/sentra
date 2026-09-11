@@ -252,6 +252,53 @@ export function aggregateReturns(returns: number[], k: number): number[] {
   return out;
 }
 
+// ── Correlation ──────────────────────────────────────────────────
+
+export interface CorrelationMatrix {
+  symbols: string[];
+  /** Row-major, symmetric, unit diagonal. NaN never appears: an asset with
+   *  no variance correlates 0 with everything. */
+  matrix: number[][];
+}
+
+/**
+ * EWMA correlation across a set of return series, on the same decay as the
+ * covariance behind VaR — so the matrix the dashboard shows is the one the
+ * model actually used, not a prettier one computed some other way.
+ *
+ * This is the "why" behind the diversification ratio. A book spread over
+ * five tickers that all sit at 0.9 with SOL is one position wearing five
+ * names, and the ratio says so; this shows the reader which pairs did it.
+ */
+export function correlationMatrix(
+  returnsBySymbol: Record<string, number[]>,
+  symbols: string[],
+  lambda = DEFAULT_LAMBDA
+): CorrelationMatrix {
+  const usable = symbols.filter(
+    (s) => Array.isArray(returnsBySymbol[s]) && returnsBySymbol[s].length >= 2
+  );
+
+  const variance = usable.map((s) =>
+    ewmaCovariance(returnsBySymbol[s], returnsBySymbol[s], lambda)
+  );
+
+  const matrix = usable.map((a, i) =>
+    usable.map((b, j) => {
+      if (i === j) return 1;
+      const denominator = Math.sqrt(variance[i] * variance[j]);
+      if (!(denominator > 0)) return 0;
+      const rho =
+        ewmaCovariance(returnsBySymbol[a], returnsBySymbol[b], lambda) /
+        denominator;
+      // Floating error can nudge a perfect pair to 1.0000000002.
+      return Math.max(-1, Math.min(1, rho));
+    })
+  );
+
+  return { symbols: usable, matrix };
+}
+
 // ── Concentration ────────────────────────────────────────────────
 
 /** Most the blended score will add for concentration alone. */

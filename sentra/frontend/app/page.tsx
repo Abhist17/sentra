@@ -14,6 +14,7 @@ import { HoldingsTable } from "@/components/HoldingsTable";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { RiskAttribution } from "@/components/RiskAttribution";
 import { OnChainPanel } from "@/components/OnChainPanel";
+import { CorrelationGrid } from "@/components/CorrelationGrid";
 import { WalletList } from "@/components/WalletList";
 import { PriceList, StressPanel } from "@/components/MarketPanel";
 import {
@@ -347,6 +348,33 @@ export default function Dashboard() {
                     level={market.stress.level}
                     signals={market.stress.signals}
                   />
+                </Panel>
+
+                <Panel delay={180}>
+                  <PanelHeader
+                    title="Correlation"
+                    meta={
+                      market.correlation
+                        ? `${market.correlation.windowDays}d · ${market.correlation.symbols.length} assets`
+                        : "awaiting history"
+                    }
+                  />
+                  {market.correlation ? (
+                    <CorrelationGrid
+                      correlation={market.correlation}
+                      held={
+                        active?.metrics?.holdings
+                          .filter((h) => h.value > 0)
+                          .map((h) => h.symbol) ?? []
+                      }
+                    />
+                  ) : (
+                    <EmptyState
+                      title="No return series yet"
+                      body="The matrix appears once the engine has loaded price history."
+                      compact
+                    />
+                  )}
                 </Panel>
               </div>
             </div>
