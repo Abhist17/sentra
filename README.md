@@ -656,7 +656,7 @@ anchor test              # program integration tests on a local validator
 
 ### Tests
 
-198 tests. The 178 off-chain ones need no network; the 20 program tests run
+205 tests. The 185 off-chain ones need no network; the 20 program tests run
 against a local validator that `anchor test` starts for you — and that CI
 starts too, whenever the program or its tests change.
 
@@ -670,7 +670,7 @@ starts too, whenever the program or its tests change.
 | What-if | 5 | Identity on an unchanged book, value preserved, de-risking lowers VaR, concentrating raises the penalty, nonsense refused |
 | Wallet registry | 7 | Address validation, limits, persistence |
 | Store | 8 | History ring buffer, and what a restart is allowed to reinstate |
-| Frontend | 43 | Formatting across eight orders of magnitude, risk bands, engine status, engine-URL resolution, explorer links, asset slots |
+| Frontend | 50 | Formatting across eight orders of magnitude, risk bands, engine status, engine-URL resolution, explorer links, asset slots, demo-dataset consistency |
 | Program | 20 | Preferences, anchoring with and without a preference, the unnamed-reporter refusal, reporter isolation, immutability, rent reclaim |
 
 ### Configuration

@@ -86,7 +86,7 @@ solana account <snapshot pda> --url devnet          # or skip the engine
 
 ## Numbers
 
-- 198 tests: 135 engine, 43 dashboard, 20 program (local validator, also in CI)
+- 205 tests: 135 engine, 50 dashboard, 20 program (local validator, also in CI)
 - 10 assets priced; 5 program instructions; 1 event
 - Dashboard: static export, hand-rolled SVG, no charting dependency,
   keyboard-first, light and dark, screen-reader announcements
