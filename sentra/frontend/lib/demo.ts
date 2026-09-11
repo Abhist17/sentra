@@ -1,4 +1,10 @@
-import type { Overview, WalletRow, RiskPoint, Holding } from "./types";
+import type {
+  Overview,
+  WalletRow,
+  RiskPoint,
+  Holding,
+  AnchorRecord,
+} from "./types";
 
 /**
  * Synthetic dataset for when no engine is reachable.
@@ -70,6 +76,57 @@ function history(
   }));
 }
 
+/**
+ * What the on-chain record would hold: a snapshot on the hour plus one at
+ * each band change, taken from the same synthetic series the chart draws so
+ * the markers sit on the line. No signatures or account addresses — the rows
+ * render without explorer links, since there is nothing real to open.
+ */
+function demoAnchors(
+  wallet: string,
+  points: RiskPoint[],
+  portfolio: number
+): AnchorRecord[] {
+  const out: AnchorRecord[] = [];
+  const BANDS = [0, 25, 45, 70];
+  const bandOf = (r: number) => BANDS.filter((b) => r >= b).length - 1;
+  // Same rule as the engine: a crossing counts once it has cleared the
+  // boundary by two points, so a score twitching at 44.9 / 45.1 is not
+  // anchored on every tick.
+  const crossed = (from: number, to: number) => {
+    const a = bandOf(from);
+    const b = bandOf(to);
+    if (a === b) return false;
+    return b > a ? to >= BANDS[b] + 2 : to <= BANDS[a] - 2;
+  };
+  let last: RiskPoint | null = null;
+
+  for (const p of points) {
+    const due =
+      last === null ||
+      p.t - last.t >= 60 * 60 * 1000 ||
+      crossed(last.risk, p.risk);
+    if (!due) continue;
+
+    // The demo series spans 48 minutes at 30s; the hourly rule alone would
+    // yield one row, so band changes are what populate it.
+    last = p;
+    out.push({
+      wallet,
+      reporter: "",
+      riskScore: Math.round(p.risk),
+      timestamp: Math.floor(p.t / 1000),
+      valueUsd: portfolio,
+      varUsd: (Math.round(p.risk) * 0.28 * portfolio) / 100,
+      pda: "",
+      signature: "",
+      breached: false,
+    });
+  }
+
+  return out;
+}
+
 function wallet(opts: {
   address: string;
   label: string;
@@ -83,6 +140,7 @@ function wallet(opts: {
   const { holdings: held, total } = holdings(opts.spec);
   const points = history(opts.riskBase, opts.riskVol, total, opts.seed);
   const risk = points[points.length - 1].risk;
+  const anchors = demoAnchors(opts.address, points, total);
 
   const sorted = [...held].sort((a, b) => b.value - a.value);
   const varPct = risk * 0.28;
@@ -115,7 +173,7 @@ function wallet(opts: {
     addedAt: Date.now() - 86_400_000,
     isDemo: true,
     history: points,
-    anchors: [],
+    anchors,
     metrics: {
       address: opts.address,
       label: opts.label,
@@ -223,8 +281,11 @@ export function buildDemoOverview(): Overview {
       varConfidence: 0.95,
       varLambda: 0.94,
       historyDays: 30,
+      // Shown as anchoring so the panel demonstrates the record. Rows are
+      // synthetic and carry no signatures, so nothing links anywhere; the
+      // program id is the real one, deployed on devnet.
       onchain: {
-        enabled: false,
+        enabled: true,
         programId: "6n6DZhiPwhYxiBLaRn9kYSW2s7WvWiVwDmciG2jP2Aoj",
         cluster: "devnet",
         reporter: null,

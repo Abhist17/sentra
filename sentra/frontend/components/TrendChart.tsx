@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { RiskPoint } from "@/lib/types";
+import type { AnchorRecord, RiskPoint } from "@/lib/types";
 import { riskBand, pct, usd, clockTime } from "@/lib/format";
 import { EmptyState } from "./ui";
 
@@ -72,9 +72,12 @@ function useMeasuredWidth(fallback: number) {
 export function TrendChart({
   points,
   threshold,
+  anchors = [],
 }: {
   points: RiskPoint[];
   threshold: number;
+  /** Scores that were anchored on-chain, drawn as markers on the line. */
+  anchors?: AnchorRecord[];
 }) {
   const [hover, setHover] = useState<number | null>(null);
   // The element being measured is the one being drawn into, so the viewBox
@@ -170,17 +173,31 @@ export function TrendChart({
       value: max - f * range,
     }));
 
+    // Anchored readings inside the chart's window. Placed by their own time
+    // and score rather than snapped to the nearest tick: a snapshot is an
+    // independent record and the marker should sit where the chain says.
+    const tEnd = points[points.length - 1].t;
+    const marks = anchors
+      .map((a) => ({ t: a.timestamp * 1000, risk: a.riskScore, key: a.pda }))
+      .filter((a) => a.t >= t0 && a.t <= tEnd)
+      .map((a) => ({
+        key: a.key || String(a.t),
+        x: PAD.left + ((a.t - t0) / elapsed) * innerW,
+        y: y(Math.max(min, Math.min(max, a.risk))),
+      }));
+
     return {
       x,
       y,
       line,
       area,
       ticks,
+      marks,
       innerH,
       thresholdY: y(Math.max(min, Math.min(max, threshold))),
       thresholdVisible: threshold >= min && threshold <= max,
     };
-  }, [points, threshold, W]);
+  }, [points, threshold, anchors, W]);
 
   if (!model) {
     return (
@@ -323,8 +340,11 @@ export function TrendChart({
         tabIndex={0}
         role="img"
         aria-label={
-          `Risk trend, ${points.length} points. ` +
-          `${hover !== null ? "Inspecting" : "Latest"}: ` +
+          `Risk trend, ${points.length} points` +
+          (model.marks.length
+            ? `, ${model.marks.length} anchored on-chain`
+            : "") +
+          `. ${hover !== null ? "Inspecting" : "Latest"}: ` +
           `${active.risk.toFixed(1)} at ${clockTime(active.t)}, ` +
           `portfolio ${usd(active.portfolio)}. ` +
           `Left and right arrows step through the series.`
@@ -396,6 +416,18 @@ export function TrendChart({
           strokeLinejoin="round"
           vectorEffect="non-scaling-stroke"
         />
+
+        {/* Hollow diamonds: monochrome, because "this reading is on the
+            chain" is a fact about provenance, not about risk. */}
+        {model.marks.map((m) => (
+          <path
+            key={m.key}
+            d={`M ${m.x} ${m.y - 4.5} L ${m.x + 4.5} ${m.y} L ${m.x} ${m.y + 4.5} L ${m.x - 4.5} ${m.y} Z`}
+            fill="var(--surface)"
+            stroke="var(--text-secondary)"
+            strokeWidth={1.25}
+          />
+        ))}
 
         {hover !== null && (
           <line

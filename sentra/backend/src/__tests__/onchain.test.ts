@@ -20,9 +20,11 @@ import {
 } from "../services/blockchain.service";
 import {
   riskBandIndex,
+  crossedBand,
   shouldAnchor,
   resetAnchorMemory,
   RISK_BANDS,
+  BAND_HYSTERESIS,
 } from "../engine/risk.engine";
 import {
   recordAnchor,
@@ -128,10 +130,47 @@ test("within the interval and the same band, nothing is written", () => {
 
 test("crossing a band anchors immediately, whichever direction", () => {
   const previous = { at: 1_000, score: 30 };
-  assert.equal(shouldAnchor(previous, 45, 1_000 + 5, 60_000), "band");
-  assert.equal(shouldAnchor(previous, 24, 1_000 + 5, 60_000), "band");
+  assert.equal(shouldAnchor(previous, 47, 1_000 + 5, 60_000), "band");
+  assert.equal(shouldAnchor(previous, 23, 1_000 + 5, 60_000), "band");
   // A large move inside the band is still not an event worth rent.
   assert.equal(shouldAnchor(previous, 44.9, 1_000 + 5, 60_000), null);
+});
+
+test("a crossing must clear the boundary by the hysteresis margin", () => {
+  assert.equal(BAND_HYSTERESIS, 2);
+
+  // Rising from Watch: 45.0 and 46.9 are Elevated by the ramp, but a score
+  // that close to the line is noise, not a transition worth rent.
+  assert.equal(crossedBand(30, 45), false);
+  assert.equal(crossedBand(30, 46.9), false);
+  assert.equal(crossedBand(30, 47), true);
+
+  // Falling from Elevated: leaving 45 needs to reach 43.
+  assert.equal(crossedBand(50, 44.9), false);
+  assert.equal(crossedBand(50, 43.1), false);
+  assert.equal(crossedBand(50, 43), true);
+
+  // A jump straight across two bands clears the margin trivially.
+  assert.equal(crossedBand(10, 80), true);
+  assert.equal(crossedBand(80, 10), true);
+});
+
+test("a wallet twitching around a boundary anchors once, not every tick", () => {
+  // Anchored at 44 (Watch). The price then wobbles the score across 45.
+  let previous = { at: 1_000, score: 44 };
+  const wobble = [45.2, 44.8, 45.4, 44.6, 45.1];
+  let anchored = 0;
+
+  for (const score of wobble) {
+    if (shouldAnchor(previous, score, 1_000 + 30, 60_000)) {
+      anchored++;
+      previous = { at: 1_000 + 30, score };
+    }
+  }
+  assert.equal(anchored, 0);
+
+  // A real move into Elevated is still caught the moment it clears 47.
+  assert.equal(shouldAnchor(previous, 47.5, 1_000 + 60, 60_000), "band");
 });
 
 test("the interval check wins when both apply, for an honest log line", () => {

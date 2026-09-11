@@ -278,12 +278,36 @@ function buildWalletRiskAlertMessage(
  */
 export const RISK_BANDS = [0, 25, 45, 70] as const;
 
+/**
+ * Points past a boundary a score must travel before the crossing counts.
+ * Without this a wallet sitting at 44.9 / 45.1 would anchor on every tick
+ * as the price twitched, spending a snapshot's rent on nothing.
+ */
+export const BAND_HYSTERESIS = 2;
+
 export function riskBandIndex(score: number): number {
   let band = 0;
   for (let i = 0; i < RISK_BANDS.length; i++) {
     if (score >= RISK_BANDS[i]) band = i;
   }
   return band;
+}
+
+/**
+ * True when `score` has moved into a different band than `from` AND cleared
+ * the boundary by the hysteresis margin, in the direction it crossed.
+ */
+export function crossedBand(from: number, score: number): boolean {
+  const before = riskBandIndex(from);
+  const after = riskBandIndex(score);
+  if (after === before) return false;
+
+  if (after > before) {
+    // Rising: the boundary entered is the new band's floor.
+    return score >= RISK_BANDS[after] + BAND_HYSTERESIS;
+  }
+  // Falling: the boundary left is the old band's floor.
+  return score <= RISK_BANDS[before] - BAND_HYSTERESIS;
 }
 
 interface AnchorMemory {
@@ -301,7 +325,7 @@ export function shouldAnchor(
 ): "first" | "interval" | "band" | null {
   if (!previous) return "first";
   if (now - previous.at >= interval) return "interval";
-  if (riskBandIndex(score) !== riskBandIndex(previous.score)) return "band";
+  if (crossedBand(previous.score, score)) return "band";
   return null;
 }
 

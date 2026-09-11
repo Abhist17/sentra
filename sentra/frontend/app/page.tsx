@@ -13,6 +13,7 @@ import { TrendChart } from "@/components/TrendChart";
 import { HoldingsTable } from "@/components/HoldingsTable";
 import { ScoreBreakdown } from "@/components/ScoreBreakdown";
 import { RiskAttribution } from "@/components/RiskAttribution";
+import { OnChainPanel } from "@/components/OnChainPanel";
 import { WalletList } from "@/components/WalletList";
 import { PriceList, StressPanel } from "@/components/MarketPanel";
 import {
@@ -256,6 +257,7 @@ export default function Dashboard() {
                 <TrendChart
                   points={active.history}
                   threshold={config.riskAlertThreshold}
+                  anchors={active.anchors}
                 />
               ) : (
                 <EmptyState
@@ -266,21 +268,46 @@ export default function Dashboard() {
             </Panel>
 
             <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-              <Panel delay={80}>
-                <PanelHeader title="Holdings" meta={active?.label} />
-                {active?.metrics ? (
-                  <HoldingsTable
-                    holdings={active.metrics.holdings}
-                    total={active.metrics.portfolio}
+              {/* min-w-0: below xl this grid has implicit auto-sized tracks,
+                  so a plain wrapper inherits the holdings table's min-content
+                  width and pushes the page wider than a phone. */}
+              <div className="min-w-0 space-y-4">
+                <Panel delay={80}>
+                  <PanelHeader title="Holdings" meta={active?.label} />
+                  {active?.metrics ? (
+                    <HoldingsTable
+                      holdings={active.metrics.holdings}
+                      total={active.metrics.portfolio}
+                    />
+                  ) : (
+                    <EmptyState
+                      title="Awaiting first tick"
+                      body="Balances are read from mainnet on the next engine cycle."
+                      compact
+                    />
+                  )}
+                </Panel>
+
+                {/* The one panel that does not ask to be trusted: each row
+                    is an account on Solana a reader can open themselves. */}
+                <Panel delay={100}>
+                  <PanelHeader
+                    title="On-chain record"
+                    meta={
+                      demo
+                        ? "synthetic"
+                        : config.onchain.enabled
+                          ? `${active?.anchors.length ?? 0} anchored`
+                          : "not anchoring"
+                    }
                   />
-                ) : (
-                  <EmptyState
-                    title="Awaiting first tick"
-                    body="Balances are read from mainnet on the next engine cycle."
-                    compact
+                  <OnChainPanel
+                    anchors={active?.anchors ?? []}
+                    onchain={config.onchain}
+                    demo={demo}
                   />
-                )}
-              </Panel>
+                </Panel>
+              </div>
 
               <div className="space-y-4">
                 <Panel delay={120}>
@@ -363,9 +390,11 @@ export default function Dashboard() {
             />
             <Row
               label="On-chain anchoring"
-              value={config.onchain.enabled ? "on" : "off"}
+              value={demo ? "—" : config.onchain.enabled ? "on" : "off"}
               color={
-                config.onchain.enabled ? "var(--calm)" : "var(--text-tertiary)"
+                !demo && config.onchain.enabled
+                  ? "var(--calm)"
+                  : "var(--text-tertiary)"
               }
             />
           </dl>
