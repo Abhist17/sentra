@@ -308,14 +308,21 @@ npm run preferences -- --threshold 60 --reporter <the engine's reporter key>
 npm run preferences -- --show
 ```
 
-To deploy your own copy of the program: `anchor build && anchor deploy
---provider.cluster devnet` in `sentra/`, then `anchor idl init` so explorers can
-decode it. For a build others can reproduce, `solana-verify build
---library-name sentra` in `sentra/` produces the binary in the standard
-container; deploy that one. `anchor build` regenerates
-`backend/src/idl/sentra.json`; without the SBF toolchain,
-`node scripts/gen-idl.js` reproduces it byte for byte, and CI fails if the
-bundled copy has drifted from the program.
+To deploy your own copy of the program, build it reproducibly and deploy
+that binary — `anchor build` and `anchor test` overwrite it with one only
+your machine can produce:
+
+```bash
+cd sentra
+npm run program:build        # solana-verify build, in the standard container
+npm run program:check        # local binary vs what is on devnet — refuses a mismatch
+anchor deploy --provider.cluster devnet
+anchor idl init --filepath target/idl/sentra.json <program id> --provider.cluster devnet
+```
+
+`anchor build` regenerates `backend/src/idl/sentra.json`; without the SBF
+toolchain, `node scripts/gen-idl.js` reproduces it byte for byte, and CI
+fails if the bundled copy has drifted from the program.
 
 ---
 
@@ -365,9 +372,11 @@ docker compose up
 
 ### Engine → Render
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Abhist17/sentra)
+
 The repo includes a [`render.yaml`](render.yaml) blueprint.
 
-1. **Render → New → Blueprint**, point it at your fork
+1. Click the button, or **Render → New → Blueprint** pointed at your fork
 2. Accept the defaults — every secret is optional
 3. Copy the resulting URL, e.g. `https://sentra-engine.onrender.com`
 
@@ -584,7 +593,8 @@ sentra/
 │   │
 │   ├── programs/sentra/     Anchor program (Rust)
 │   ├── tests/               Anchor integration tests (20 cases on a local validator)
-│   └── scripts/gen-idl.js   regenerates the bundled IDL; --check guards drift in CI
+│   └── scripts/             gen-idl.js (bundled IDL, drift-checked in CI),
+│                            check-program-hash.sh (local binary vs cluster)
 │
 ├── docs/                    screenshot, submission notes, capstone papers
 ├── render.yaml              engine blueprint

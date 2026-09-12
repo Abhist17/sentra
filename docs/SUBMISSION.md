@@ -54,7 +54,7 @@ A first real snapshot is [`5dxA6JF1…`](https://explorer.solana.com/address/5dx
 
 ## Try it in 60 seconds
 
-1. Open **https://abhist17.github.io/sentra/** — demo data, clearly labelled.
+1. Open **[abhist17.github.io/sentra](https://abhist17.github.io/sentra/)** — demo data, clearly labelled.
 2. `git clone https://github.com/Abhist17/sentra && cd sentra/sentra/backend && npm install && npm run dev`
 3. In the dashboard, **Connect to an engine** → `http://localhost:4000`.
    Prices and stress appear immediately; scoring starts once ten 30-day

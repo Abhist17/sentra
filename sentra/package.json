@@ -12,7 +12,9 @@
     "typecheck": "npm --prefix backend run typecheck && npm --prefix frontend run typecheck",
     "gen:idl": "node scripts/gen-idl.js",
     "test:frontend": "npm --prefix frontend test",
-    "test": "npm --prefix backend test && npm --prefix frontend test"
+    "test": "npm --prefix backend test && npm --prefix frontend test",
+    "program:check": "bash scripts/check-program-hash.sh",
+    "program:build": "solana-verify build --library-name sentra"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.32.1"
